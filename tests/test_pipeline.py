@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import fitz
 import pytest
 from openpyxl import load_workbook
 
@@ -149,6 +150,34 @@ def test_corrupt_pdf_is_reported_not_raised(tmp_path: Path):
     bad.write_bytes(b"this is not a pdf")
     rec = extract_drawing(bad)
     assert rec.error and rec.needs_review
+
+
+@pytest.mark.parametrize("label", [
+    "ASSEMBLY MARK", "MEMBER NAME", "PIECE MARK", "MARK", "ASSEMBLY No",
+    "SHIPPING MARK", "MEMBER ID", "PART POSITION", "ASSEMBLY REF",
+])
+def test_common_title_block_label_wordings(tmp_path: Path, label: str):
+    """An unrecognised qualifier must not be captured as the mark.
+
+    "MEMBER ID : B-101" previously yielded "ID", because the qualifier group
+    failed to match and the capture fell onto the next word.
+    """
+    pdf = tmp_path / f"{label.replace(' ', '_')}.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=842, height=595)
+    page.insert_text((520, 430), f"{label} : B-101", fontsize=11)
+    doc.save(pdf)
+    doc.close()
+    assert extract_drawing(pdf).member_name == "B-101"
+
+
+@pytest.mark.parametrize("mark", [
+    "B-101", "1001", "ASSY-12A", "B/101", "C101A", "EB-1", "P.301",
+    "BM_204", "12", "SC-1001-A", "COL-1",
+])
+def test_real_world_mark_shapes(tmp_path: Path, mark: str):
+    pdf = make_drawing(tmp_path / f"{mark.replace('/', '~')}.pdf", mark, revision=1, seq=1)
+    assert extract_drawing(pdf).member_name == mark.upper()
 
 
 def test_stopwords_are_never_taken_as_member_names(tmp_path: Path):

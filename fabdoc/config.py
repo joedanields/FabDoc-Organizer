@@ -52,9 +52,9 @@ class ExtractionProfile:
     # --- Member name / mark -------------------------------------------------
     member_patterns: list[str] = field(
         default_factory=lambda: [
-            r"(?:ASSEMBLY|ASSY)\s*(?:MARK|MK|No\.?|NUMBER)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
-            r"(?:MEMBER)\s*(?:MARK|MK|NAME|No\.?|NUMBER)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
-            r"(?:PIECE|PART)\s*(?:MARK|MK|No\.?|NUMBER)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:ASSEMBLY|ASSY)\s*(?:MARK|MK|No\.?|NUMBER|ID|REF|POS(?:ITION)?)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:MEMBER)\s*(?:MARK|MK|NAME|No\.?|NUMBER|ID|REF|POS(?:ITION)?)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:PIECE|PART)\s*(?:MARK|MK|No\.?|NUMBER|ID|REF|POS(?:ITION)?)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
             r"\bMARK\s*[:\-]\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
             r"(?:DRAWING|DRG|DWG)\s*(?:No\.?|NUMBER|NAME)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
         ]
@@ -108,11 +108,15 @@ class ExtractionProfile:
     member_shape_pattern: str = r"^(?=.*\d)[A-Z0-9][A-Z0-9._/\-]{1,19}$"
 
     # Words that must never be accepted as a member name, whatever matches.
+    # The second row is label vocabulary: an unrecognised qualifier after a
+    # label ("MEMBER ID : B-101") would otherwise be captured as the mark.
     member_stopwords: list[str] = field(
         default_factory=lambda: [
             "SCALE", "SHEET", "DATE", "REV", "REVISION", "DRAWN", "CHECKED",
             "APPROVED", "TITLE", "PROJECT", "CLIENT", "ZONE", "NONE", "NTS",
             "DETAIL", "SECTION", "NOTES", "TOTAL", "WEIGHT", "GRADE", "QTY",
+            "ID", "NO", "NO.", "NUMBER", "NAME", "MARK", "MK", "POS", "POSITION",
+            "REF", "TYPE", "ITEM", "DESC", "DESCRIPTION", "OF", "SIZE", "UNIT",
         ]
     )
 
