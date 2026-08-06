@@ -35,11 +35,22 @@ class ProjectMeta:
     title: str = ""
     issue_date: date | None = None
     date_text: str = ""          # the raw token the date came from
-    zone: str = ""
+    zones: list[str] = field(default_factory=list)
     package: str = ""
     revision: str = ""
+    issue_no: str = ""           # leading "25." in "25. 2026-07-06 Stairs..."
+    sequences: list[str] = field(default_factory=list)
     folder_name: str = ""
     extras: list[str] = field(default_factory=list)
+
+    @property
+    def zone(self) -> str:
+        """Zones as one display string: "1, 2"."""
+        return ", ".join(self.zones)
+
+    @zone.setter
+    def zone(self, value: str) -> None:
+        self.zones = [z.strip() for z in str(value).split(",") if z.strip()]
 
     @property
     def date_display(self) -> str:
@@ -118,6 +129,8 @@ def parse_date_token(text: str, day_first: bool = True) -> tuple[date | None, st
 # ---------------------------------------------------------------------------
 
 _ZONE_RE = re.compile(_LB + r"ZONE\s*[-_:# ]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,11})" + _RB, re.I)
+_ISSUE_NO_RE = re.compile(r"^(\d{1,4})\s*[.)]\s*")
+_SEQS_RE = re.compile(r"\(\s*SEQ(?:UENCE)?S?\.?\s*[:\-]?\s*([\d,\s]+?)\s*\)", re.I)
 _ZONE_BARE_RE = re.compile(r"^Z[-_ ]?([A-Za-z0-9]{1,6})$", re.I)
 _PACKAGE_RE = re.compile(
     _LB + r"(?:PACKAGE|PKG|PCKG|PK)\s*[-_:# ]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,11})" + _RB, re.I
@@ -130,6 +143,12 @@ def parse_folder_name(name: str, day_first: bool = True) -> ProjectMeta:
     meta = ProjectMeta(folder_name=name)
     working = name.strip()
 
+    # A leading "25." is the issue number, not part of the title.
+    issue = _ISSUE_NO_RE.match(working)
+    if issue:
+        meta.issue_no = issue.group(1)
+        working = working[issue.end():]
+
     # Date first: it is the most reliably shaped token, and removing it stops
     # its digits from polluting the title.
     parsed_date, date_text = parse_date_token(working, day_first=day_first)
@@ -138,7 +157,24 @@ def parse_folder_name(name: str, day_first: bool = True) -> ProjectMeta:
     if date_text:
         working = working.replace(date_text, " \x00 ", 1)
 
-    for regex, attr in ((_ZONE_RE, "zone"), (_PACKAGE_RE, "package"), (_REV_RE, "revision")):
+    # "(Seqs 172,173,270,271)" - the sequences covered by this issue.
+    seqs = _SEQS_RE.search(working)
+    if seqs:
+        meta.sequences = [s.strip() for s in re.split(r"[,\s]+", seqs.group(1)) if s.strip()]
+        working = working[: seqs.start()] + " \x00 " + working[seqs.end():]
+
+    # Every zone mentioned, in order, de-duplicated: "Zone 1 and Zone 2" -> 1, 2.
+    # Zones are deliberately NOT excised from the working string - the title
+    # usually reads "Stairs at Zone 1 and Zone 2", and cutting the zones out
+    # leaves a mangled "Stairs at and Zone 2".
+    seen: set[str] = set()
+    for match in _ZONE_RE.finditer(working):
+        zone = match.group(1).upper()
+        if zone not in seen:
+            seen.add(zone)
+            meta.zones.append(zone)
+
+    for regex, attr in ((_PACKAGE_RE, "package"), (_REV_RE, "revision")):
         match = regex.search(working)
         if match:
             setattr(meta, attr, match.group(1).upper())
@@ -150,13 +186,13 @@ def parse_folder_name(name: str, day_first: bool = True) -> ProjectMeta:
     parts = [p.replace("\x00", "").strip(" -_") for p in parts]
     parts = [p for p in parts if p]
 
-    if not meta.zone:
+    if not meta.zones:
         # A standalone "Z2"-style token counts as a zone once the labelled
         # forms have been ruled out.
         for part in list(parts):
             bare = _ZONE_BARE_RE.match(part)
             if bare:
-                meta.zone = bare.group(1).upper()
+                meta.zones = [bare.group(1).upper()]
                 parts.remove(part)
                 break
 

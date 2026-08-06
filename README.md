@@ -37,7 +37,8 @@ python -m fabdoc
 ```
 python -m fabdoc scan     "D:\Projects\Skyline Tower - Zone B - PKG-03 - 12-05-2024"
 python -m fabdoc generate "D:\Projects\Skyline Tower - Zone B - PKG-03 - 12-05-2024"
-python -m fabdoc validate "D:\Projects\Skyline Tower - Zone B - PKG-03 - 12-05-2024" "D:\Model\members.xlsx"
+python -m fabdoc validate "D:\Projects\...\issue-25" "D:\Model\members.xlsx"
+python -m fabdoc diff     "D:\Projects\...\issue-15" "D:\Projects\...\issue-25"
 ```
 
 `validate` also accepts an already-generated register workbook in place of the
@@ -71,7 +72,11 @@ written, so a miss is a correction rather than a failure.
 ### 2. Category detection
 
 Subfolders containing PDFs become worksheets. Names are matched loosely, so
-`Erection Drawings`, `erection` and `Assembly Drawings` all land on **Erection**.
+`Assembly`, `Assembly Drawings` and `Shop Drawings` all land on **Assembly**.
+
+**Assembly and Erection are separate categories.** An assembly drawing details
+one fabricated assembly for the shop; an erection drawing shows where assemblies
+go on site. A folder named `Assembly` is never relabelled `Erection`.
 
 - One category present → one worksheet.
 - Three present → three worksheets.
@@ -97,16 +102,48 @@ register, so the uncertainty is on the page rather than hidden.
 
 ### 4. The register
 
-One workbook, one worksheet per category, columns
-`Title | Date | S.No | Member Name | Revision No | Source File | Notes`,
-sorted by sequence number. Title and Date repeat per row so registers from
-several issues can be stacked and filtered. A `Summary` sheet carries the
-per-category counts.
+One workbook, one worksheet per category, three columns:
+`S.No | Member Name | Revision No`.
 
-*Source File* and *Notes* are additions beyond the specified columns - they are
-what makes a flagged row traceable back to a drawing. Set
-`include_source_column` to `false` in the settings file for exactly the five
-specified columns.
+Project title, issue date and zones are stated **once** in the header band above
+the table, not repeated on every row. Set `include_source_column` to `true` in
+settings to add `Source File` and `Notes` when you need to trace a flagged row
+back to its drawing.
+
+### Zones
+
+Many detailers encode the erection sequence into the member mark itself:
+`17172C172` is job `17`, sequence `172`, member `C172`, and the leading digit of
+the sequence gives **Zone 1**. Sequence `270` gives Zone 2, `471` gives Zone 4.
+
+When a package spans several zones they are **clustered in one worksheet**, each
+under a banded zone header, with `S.No` restarting at 1 per zone:
+
+```
+ZONE 1   (Seq 172, 173)   -   64 drawing(s)
+S.No | Member Name | Revision No
+  1  | 17172C172   |      B
+  2  | 17172C242   |      B
+...
+ZONE 2   (Seq 270, 271)   -   55 drawing(s)
+S.No | Member Name | Revision No
+  1  | 17270C335   |      B
+```
+
+The mark pattern is `member_seq_pattern` in settings; clear it to switch this
+off, or set `group_by_zone: false` for one flat table.
+
+### Comparing two issues
+
+Packages get re-issued constantly - "for Approval" then "for Re Approval". The
+`diff` command compares two issues and reports which drawings are **added**,
+**removed**, came back at a **different revision**, or changed in **quantity**:
+
+```
+python -m fabdoc diff "<older issue>" "<newer issue>"
+```
+
+Either side can be a package folder or an already-generated register workbook.
 
 ### 5. Member validation
 
@@ -162,7 +199,8 @@ team.
 python -m pytest
 ```
 
-47 tests covering folder parsing, category detection, all four extraction tiers,
+85 tests covering folder parsing, category detection, all four extraction tiers,
 sorting, workbook structure and round-trip, member-list import, and the
-validation logic. They build real PDFs with PyMuPDF rather than mocking, so the
-extraction cascade is genuinely exercised.
+validation logic, zone derivation and issue-to-issue comparison. They build real
+PDFs with PyMuPDF rather than mocking, so the extraction cascade is genuinely
+exercised.

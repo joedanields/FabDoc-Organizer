@@ -21,6 +21,8 @@ _LABEL_FONT = Font(bold=True, size=10, color="1F4E79")
 _VALUE_FONT = Font(size=10)
 _HEADER_FONT = Font(bold=True, size=10, color="FFFFFF")
 _HEADER_FILL = PatternFill("solid", fgColor="2E75B6")
+_ZONE_FONT = Font(bold=True, size=11, color="FFFFFF")
+_ZONE_FILL = PatternFill("solid", fgColor="548235")     # green band per zone
 _REVIEW_FILL = PatternFill("solid", fgColor="FFF2CC")   # amber: check this row
 _ERROR_FILL = PatternFill("solid", fgColor="F8CBAD")    # orange: file failed
 _OK_FILL = PatternFill("solid", fgColor="E2EFDA")
@@ -47,6 +49,7 @@ def _style_header_band(ws: Worksheet, register: Register, category: CategoryRegi
     cell.alignment = _CENTER
     ws.row_dimensions[1].height = 22
 
+    # Title and date appear here once, not repeated on every register row.
     pairs = [
         ("Project Title", meta.title),
         ("Issue Date", meta.date_display),
@@ -54,72 +57,92 @@ def _style_header_band(ws: Worksheet, register: Register, category: CategoryRegi
         ("Package", meta.package),
         ("Category", category.name),
         ("Drawings", str(category.total)),
-        ("Source Folder", str(category.folder)),
-        ("Generated", datetime.now().strftime("%d-%b-%Y %H:%M")),
     ]
 
     row = 2
-    col = 1
     for label, value in pairs:
         if not value:
             continue
-        lc = ws.cell(row=row, column=col, value=f"{label}:")
+        lc = ws.cell(row=row, column=1, value=f"{label}:")
         lc.font = _LABEL_FONT
         lc.alignment = _LEFT
-        vc = ws.cell(row=row, column=col + 1, value=value)
+        vc = ws.cell(row=row, column=2, value=value)
         vc.font = _VALUE_FONT
         vc.alignment = _LEFT
-        col += 2
-        if col > width - 1:
-            col = 1
-            row += 1
-    return row + 2 if col == 1 else row + 2
+        # Long titles need the rest of the table width to stay readable.
+        if width > 2:
+            ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=width)
+        row += 1
+    return row + 1
 
 
 def _write_category_sheet(ws: Worksheet, register: Register,
-                          category: CategoryRegister, include_source: bool) -> None:
-    # Columns are exactly those named in the requirement; Title and Date repeat
-    # per row so registers from several issues can be stacked and filtered.
-    headers = ["Title", "Date", "S.No", "Member Name", "Revision No"]
+                          category: CategoryRegister, include_source: bool,
+                          group_by_zone: bool = True) -> None:
+    # Project title and date live in the header band above, not repeated on
+    # every row - the register is a deliverable, not a database export.
+    headers = ["S.No", "Member Name", "Revision No"]
     if include_source:
         headers += ["Source File", "Notes"]
 
     header_row = _style_header_band(ws, register, category, len(headers))
+    last_col = get_column_letter(len(headers))
 
-    for idx, name in enumerate(headers, start=1):
-        cell = ws.cell(row=header_row, column=idx, value=name)
-        cell.font = _HEADER_FONT
-        cell.fill = _HEADER_FILL
-        cell.alignment = _CENTER
-        cell.border = _BORDER
-    ws.row_dimensions[header_row].height = 18
+    groups = category.zone_groups() if group_by_zone else [("", list(category.records))]
+    row = header_row
 
-    title = register.meta.title
-    date_text = register.meta.date_display
-
-    row = header_row + 1
-    for rec in category.records:
-        seq: object = int(rec.seq_no) if rec.seq_no.isdigit() else rec.seq_no
-        values: list[object] = [title, date_text, seq, rec.member_name, rec.revision]
-        if include_source:
-            values += [rec.source_file, rec.error or rec.note_text]
-
-        for idx, value in enumerate(values, start=1):
-            cell = ws.cell(row=row, column=idx, value=value)
+    for zone, records in groups:
+        if zone:
+            # Banded zone header, spanning the table, above each cluster.
+            ws.merge_cells(f"A{row}:{last_col}{row}")
+            seqs = category.sequences_for(zone)
+            label = f"ZONE {zone}"
+            if seqs:
+                label += f"   (Seq {', '.join(seqs)})"
+            label += f"   -   {len(records)} drawing(s)"
+            cell = ws[f"A{row}"]
+            cell.value = label
+            cell.font = _ZONE_FONT
+            cell.fill = _ZONE_FILL
+            cell.alignment = _LEFT
             cell.border = _BORDER
-            cell.alignment = _CENTER if idx in (2, 3, 5) else _LEFT
-            if rec.error:
-                cell.fill = _ERROR_FILL
-            elif rec.needs_review:
-                cell.fill = _REVIEW_FILL
+            ws.row_dimensions[row].height = 20
+            row += 1
+
+        for idx, name in enumerate(headers, start=1):
+            cell = ws.cell(row=row, column=idx, value=name)
+            cell.font = _HEADER_FONT
+            cell.fill = _HEADER_FILL
+            cell.alignment = _CENTER
+            cell.border = _BORDER
+        ws.row_dimensions[row].height = 18
         row += 1
 
-    # Freeze the header and enable filtering: registers run to thousands of rows.
-    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
-    if row > header_row + 1:
-        ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(headers))}{row - 1}"
+        for rec in records:
+            seq: object = int(rec.seq_no) if rec.seq_no.isdigit() else rec.seq_no
+            values: list[object] = [seq, rec.member_name, rec.revision]
+            if include_source:
+                values += [rec.source_file, rec.error or rec.note_text]
+            for idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=idx, value=value)
+                cell.border = _BORDER
+                cell.alignment = _CENTER if idx in (1, 3) else _LEFT
+                if rec.error:
+                    cell.fill = _ERROR_FILL
+                elif rec.needs_review:
+                    cell.fill = _REVIEW_FILL
+            row += 1
 
-    widths = [34, 14, 8, 24, 12, 40, 34]
+        if zone:
+            row += 1  # blank spacer between zone clusters
+
+    # Freeze below the first header. Autofilter is only meaningful on a single
+    # contiguous table, so it is skipped when the sheet is split into clusters.
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+    if len(groups) == 1 and row > header_row + 1:
+        ws.auto_filter.ref = f"A{header_row}:{last_col}{row - 1}"
+
+    widths = [8, 26, 12, 40, 34]
     for idx, width in enumerate(widths[: len(headers)], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
 
@@ -194,7 +217,8 @@ def _write_summary_sheet(ws: Worksheet, register: Register) -> None:
 
 
 def write_register(register: Register, output_path: str | Path,
-                   include_source: bool = True, include_summary: bool = True) -> Path:
+                   include_source: bool = False, include_summary: bool = True,
+                   group_by_zone: bool = True) -> Path:
     """Write the register to an .xlsx workbook, one worksheet per category."""
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -208,7 +232,7 @@ def write_register(register: Register, output_path: str | Path,
     used: set[str] = {"Summary"} if include_summary else set()
     for cat in register.categories:
         ws = wb.create_sheet(safe_sheet_name(cat.name, used))
-        _write_category_sheet(ws, register, cat, include_source)
+        _write_category_sheet(ws, register, cat, include_source, group_by_zone)
 
     if not register.categories and not include_summary:
         wb.create_sheet("Register")
@@ -229,6 +253,104 @@ def suggest_register_name(register: Register) -> str:
 # ---------------------------------------------------------------------------
 # Validation report
 # ---------------------------------------------------------------------------
+
+
+def write_comparison_report(result, output_path: str | Path) -> Path:
+    """Write an IssueComparison (register vs register) to a workbook."""
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Summary"
+
+    ws.merge_cells("A1:D1")
+    cell = ws["A1"]
+    cell.value = "ISSUE COMPARISON REPORT"
+    cell.font = _TITLE_FONT
+    cell.fill = _TITLE_FILL
+    cell.alignment = _CENTER
+
+    row = 3
+    for label, value in (
+        ("Old issue", result.old_label),
+        ("New issue", result.new_label),
+        ("Drawings in old issue", result.old_total),
+        ("Drawings in new issue", result.new_total),
+        ("Generated", datetime.now().strftime("%d-%b-%Y %H:%M")),
+    ):
+        ws.cell(row=row, column=1, value=label).font = _LABEL_FONT
+        ws.cell(row=row, column=2, value=value).font = _VALUE_FONT
+        row += 1
+
+    row += 1
+    for idx, name in enumerate(["Result", "Count"], start=1):
+        c = ws.cell(row=row, column=idx, value=name)
+        c.font = _HEADER_FONT
+        c.fill = _HEADER_FILL
+        c.alignment = _CENTER
+        c.border = _BORDER
+    row += 1
+    for label, value, fill in (
+        ("Added in new issue", len(result.added), _EXTRA_FILL),
+        ("Removed in new issue", len(result.removed), _MISSING_FILL),
+        ("Revision changed", len(result.revision_changed), _REVIEW_FILL),
+        ("Quantity changed", len(result.quantity_changed), _REVIEW_FILL),
+        ("Unchanged", len(result.unchanged), _OK_FILL),
+    ):
+        lc = ws.cell(row=row, column=1, value=label)
+        vc = ws.cell(row=row, column=2, value=value)
+        for c in (lc, vc):
+            c.border = _BORDER
+            c.fill = fill
+        vc.alignment = _CENTER
+        row += 1
+
+    row += 1
+    verdict = ws.cell(row=row, column=1, value=result.verdict)
+    verdict.font = Font(bold=True, size=12,
+                        color="375623" if result.is_identical else "C00000")
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+
+    for idx, width in enumerate([28, 46, 16, 16], start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = width
+
+    def sheet(title: str, deltas: list, fill: PatternFill, show_both_revs: bool) -> None:
+        s = wb.create_sheet(safe_sheet_name(title))
+        headers = ["Member Name", "Zone"]
+        headers += ["Old Rev", "New Rev"] if show_both_revs else ["Revision"]
+        headers += ["Qty Old", "Qty New"]
+        for idx, name in enumerate(headers, start=1):
+            c = s.cell(row=1, column=idx, value=name)
+            c.font = _HEADER_FONT
+            c.fill = _HEADER_FILL
+            c.alignment = _CENTER
+            c.border = _BORDER
+        for r_idx, d in enumerate(deltas, start=2):
+            values = [d.member_name, d.zone]
+            values += ([d.old_revision, d.new_revision] if show_both_revs
+                       else [d.new_revision or d.old_revision])
+            values += [d.old_count, d.new_count]
+            for c_idx, value in enumerate(values, start=1):
+                c = s.cell(row=r_idx, column=c_idx, value=value)
+                c.border = _BORDER
+                c.fill = fill
+                c.alignment = _LEFT if c_idx == 1 else _CENTER
+        s.freeze_panes = "A2"
+        if deltas:
+            s.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(deltas) + 1}"
+        for idx in range(1, len(headers) + 1):
+            s.column_dimensions[get_column_letter(idx)].width = 26 if idx == 1 else 12
+
+    sheet("Added", result.added, _EXTRA_FILL, False)
+    sheet("Removed", result.removed, _MISSING_FILL, False)
+    if result.revision_changed:
+        sheet("Revision Changed", result.revision_changed, _REVIEW_FILL, True)
+    if result.quantity_changed:
+        sheet("Quantity Changed", result.quantity_changed, _REVIEW_FILL, True)
+
+    wb.save(out)
+    return out
 
 
 def write_validation_report(result, output_path: str | Path) -> Path:

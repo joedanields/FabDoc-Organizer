@@ -22,14 +22,19 @@ from typing import Any
 # Matching is case-insensitive and checked against the folder name with
 # non-alphanumeric characters stripped, so "Erection-Drawings" and
 # "erection drawings" both hit "erection".
+# "Assembly" is its own category, not an alias of Erection. An assembly drawing
+# details one fabricated assembly for the shop; an erection drawing shows where
+# assemblies go on site. They are different deliverables and folders named
+# "Assembly" must not be relabelled "Erection" in the register.
 DEFAULT_CATEGORY_ALIASES: dict[str, list[str]] = {
     "Structural": ["structural", "struct", "gad", "generalarrangement"],
-    "Erection": ["erection", "erect", "assembly", "assy", "shopassembly"],
+    "Assembly": ["assembly", "assy", "shopassembly", "shopdrawing", "shop"],
+    "Erection": ["erection", "erect", "layout", "anchorbolt"],
     "Part": ["part", "partdrawing", "piece", "singlepart", "component"],
 }
 
 # Order categories appear as worksheets, regardless of folder order on disk.
-DEFAULT_CATEGORY_ORDER: list[str] = ["Structural", "Erection", "Part"]
+DEFAULT_CATEGORY_ORDER: list[str] = ["Structural", "Assembly", "Erection", "Part"]
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +133,18 @@ class ExtractionProfile:
     # Treat a drawing with no revision found as this value rather than blank.
     default_revision: str = "0"
 
+    # --- Sequence and zone encoded in the member mark -----------------------
+    # Many detailers encode the erection sequence into the mark itself:
+    # "17172C172" is job 17, sequence 172, member C172. The named groups "job"
+    # and "seq" are what matter; "seq" drives both the S.No grouping and the
+    # zone. Set member_seq_pattern to "" to switch this off entirely.
+    member_seq_pattern: str = r"^(?P<job>\d{2})(?P<seq>\d{3})(?P<rest>[A-Za-z].*)$"
+
+    # Zone is the leading digit(s) of the sequence: seq 172 -> zone 1,
+    # seq 270 -> zone 2, seq 471 -> zone 4.
+    derive_zone_from_seq: bool = True
+    zone_seq_digits: int = 1
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["title_block_rect"] = list(self.title_block_rect)
@@ -161,8 +178,13 @@ class AppSettings:
     compare_ignore_whitespace: bool = True
     compare_strip_leading_zeros: bool = False
 
-    # Include a Source File column in the register for traceability.
-    include_source_column: bool = True
+    # Include Source File and Notes columns in the register. Off by default:
+    # the register is a deliverable, and project title and date already appear
+    # in the header band above the table rather than repeating on every row.
+    include_source_column: bool = False
+
+    # Group register rows under a banded zone header, restarting S.No per zone.
+    group_by_zone: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -174,6 +196,7 @@ class AppSettings:
             "compare_ignore_whitespace": self.compare_ignore_whitespace,
             "compare_strip_leading_zeros": self.compare_strip_leading_zeros,
             "include_source_column": self.include_source_column,
+            "group_by_zone": self.group_by_zone,
         }
 
     @classmethod
@@ -185,6 +208,7 @@ class AppSettings:
             "category_aliases", "category_order", "day_first_dates",
             "compare_case_insensitive", "compare_ignore_whitespace",
             "compare_strip_leading_zeros", "include_source_column",
+            "group_by_zone",
         ):
             if key in data:
                 setattr(s, key, data[key])

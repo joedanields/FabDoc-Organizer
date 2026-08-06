@@ -47,6 +47,11 @@ class DrawingRecord:
     member_name: str = ""
     revision: str = ""
 
+    # Derived from the member mark: "17172C172" -> job 17, sequence 172, zone 1.
+    job_no: str = ""
+    seq_group: str = ""
+    zone: str = ""
+
     seq_source: str = SOURCE_NONE
     member_source: str = SOURCE_NONE
     revision_source: str = SOURCE_NONE
@@ -142,6 +147,36 @@ def _largest_mark(
 
 def _reject_stopword(value: str, stopwords: set[str]) -> str:
     return "" if value.upper() in stopwords else value
+
+
+def parse_member_mark(mark: str, profile: ExtractionProfile | None = None
+                      ) -> tuple[str, str, str]:
+    """Split a member mark into ``(job, sequence, zone)``.
+
+    Detailers commonly encode the erection sequence into the mark itself, so
+    "17172C172" is job 17, sequence 172, and - taking the leading digit of the
+    sequence - zone 1. Returns empty strings when the mark does not fit the
+    configured shape, which is not an error: plenty of projects do not do this.
+    """
+    prof = profile or ExtractionProfile()
+    if not mark or not prof.member_seq_pattern:
+        return "", "", ""
+    try:
+        match = re.match(prof.member_seq_pattern, mark.strip(), re.IGNORECASE)
+    except re.error:
+        return "", "", ""
+    if not match:
+        return "", "", ""
+
+    groups = match.groupdict()
+    job = (groups.get("job") or "").strip()
+    seq = (groups.get("seq") or "").strip()
+
+    zone = ""
+    if seq and prof.derive_zone_from_seq:
+        digits = max(1, prof.zone_seq_digits)
+        zone = seq[:digits].lstrip("0") or seq[:digits]
+    return job, seq, zone
 
 
 def _tidy_seq(value: str) -> str:
@@ -273,6 +308,10 @@ def extract_drawing(
 
     if not record.member_name and not record.error:
         record.notes.append("member name not found")
+
+    record.job_no, record.seq_group, record.zone = parse_member_mark(
+        record.member_name, prof
+    )
 
     return record
 

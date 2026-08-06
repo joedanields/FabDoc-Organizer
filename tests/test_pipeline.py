@@ -13,8 +13,11 @@ from conftest import make_drawing
 
 from fabdoc.categories import classify_folder_name, discover_categories, safe_sheet_name
 from fabdoc.config import AppSettings, ExtractionProfile
-from fabdoc.excel_out import write_register, write_validation_report
-from fabdoc.extract import SOURCE_FILENAME, SOURCE_LARGEST, extract_drawing
+from fabdoc.compare import compare_issues
+from fabdoc.excel_out import (write_comparison_report, write_register,
+                              write_validation_report)
+from fabdoc.extract import (SOURCE_FILENAME, SOURCE_LARGEST, extract_drawing,
+                            parse_member_mark)
 from fabdoc.folder_meta import parse_folder_name
 from fabdoc.memberlist import read_member_list
 from fabdoc.register import build_register, sort_records
@@ -68,7 +71,11 @@ def test_folder_without_metadata_becomes_the_title():
     ("erection", "Erection"),
     ("Part Drawings", "Part"),
     ("Single Part Drawings", "Part"),
-    ("Assembly Drawings", "Erection"),
+    # An assembly drawing details one fabricated assembly for the shop; an
+    # erection drawing shows where assemblies go on site. Not the same thing.
+    ("Assembly Drawings", "Assembly"),
+    ("Assembly", "Assembly"),
+    ("Shop Drawings", "Assembly"),
     ("Random Folder", None),
 ])
 def test_category_classification(folder, expected):
@@ -211,13 +218,26 @@ def test_rows_are_sorted_by_sequence_number():
     assert [r.seq_no for r in sort_records(records)] == ["1", "2", "10"]
 
 
-def test_non_numeric_sequences_sort_last_without_error():
+def test_records_sort_by_zone_then_sequence_then_mark():
     from fabdoc.extract import DrawingRecord
     records = [
-        DrawingRecord(seq_no="A1", member_name="X"),
-        DrawingRecord(seq_no="3", member_name="Y"),
+        DrawingRecord(member_name="17271X9", zone="2", seq_group="271"),
+        DrawingRecord(member_name="17172C10", zone="1", seq_group="172"),
+        DrawingRecord(member_name="17172C2", zone="1", seq_group="172"),
+        DrawingRecord(member_name="17173R1", zone="1", seq_group="173"),
     ]
-    assert [r.seq_no for r in sort_records(records)] == ["3", "A1"]
+    assert [r.member_name for r in sort_records(records)] == [
+        "17172C2", "17172C10", "17173R1", "17271X9",
+    ]
+
+
+def test_records_without_a_zone_sort_last_without_error():
+    from fabdoc.extract import DrawingRecord
+    records = [
+        DrawingRecord(member_name="LOOSE"),
+        DrawingRecord(member_name="17172C1", zone="1", seq_group="172"),
+    ]
+    assert [r.member_name for r in sort_records(records)] == ["17172C1", "LOOSE"]
 
 
 def test_category_selection_limits_the_run(project_folder: Path):
@@ -251,8 +271,20 @@ def test_workbook_has_a_sheet_per_category(project_folder: Path, tmp_path: Path)
         if row and "Member Name" in [str(c) for c in row if c]:
             headers = [c for c in row if c]
             break
-    assert headers == ["Title", "Date", "S.No", "Member Name", "Revision No",
-                       "Source File", "Notes"]
+    # Title and date belong in the header band above, stated once, not
+    # repeated on every row of the deliverable.
+    assert headers == ["S.No", "Member Name", "Revision No"]
+    wb.close()
+
+
+def test_source_columns_can_be_switched_back_on(project_folder: Path, tmp_path: Path):
+    reg = build_register(project_folder)
+    out = write_register(reg, tmp_path / "traced.xlsx", include_source=True)
+    wb = load_workbook(out)
+    ws = wb["Structural"]
+    headers = next(([c for c in row if c] for row in ws.iter_rows(values_only=True)
+                    if row and "Member Name" in [str(c) for c in row if c]), None)
+    assert headers == ["S.No", "Member Name", "Revision No", "Source File", "Notes"]
     wb.close()
 
 
@@ -409,3 +441,122 @@ def test_legacy_xls_is_rejected_with_guidance(tmp_path: Path):
     path.write_bytes(b"")
     with pytest.raises(ValueError, match="xlsx"):
         read_member_list(path)
+
+
+# ------------------------------------------------------- zones and sequences
+
+
+def test_multiple_zones_are_all_captured():
+    meta = parse_folder_name(
+        "25. 2026-07-06  Stairs at Zone 1 and Zone 2 for Re Approval (Seqs 172,173,270,271)"
+    )
+    assert meta.zones == ["1", "2"]
+    assert meta.zone == "1, 2"
+    assert meta.issue_no == "25"
+    assert meta.sequences == ["172", "173", "270", "271"]
+    assert meta.issue_date == date(2026, 7, 6)
+
+
+def test_zone_tokens_are_not_cut_out_of_the_title():
+    """Excising the zones left a mangled "Stairs at  and Zone 2"."""
+    meta = parse_folder_name(
+        "25. 2026-07-06  Stairs at Zone 1 and Zone 2 for Re Approval (Seqs 172,173,270,271)"
+    )
+    assert meta.title == "Stairs at Zone 1 and Zone 2 for Re Approval"
+
+
+@pytest.mark.parametrize("mark,job,seq,zone", [
+    ("17172C172", "17", "172", "1"),
+    ("17173R44", "17", "173", "1"),
+    ("17270S12", "17", "270", "2"),
+    ("17271X211", "17", "271", "2"),
+    ("17471C10", "17", "471", "4"),
+])
+def test_sequence_and_zone_derived_from_member_mark(mark, job, seq, zone):
+    assert parse_member_mark(mark) == (job, seq, zone)
+
+
+def test_marks_that_do_not_encode_a_sequence_are_not_forced():
+    assert parse_member_mark("C-101") == ("", "", "")
+    assert parse_member_mark("") == ("", "", "")
+
+
+def test_serial_number_restarts_within_each_zone(tmp_path: Path):
+    root = tmp_path / "Stairs at Zone 1 and Zone 2 - 2026-07-06"
+    for mark in ["17172C1", "17172C2", "17173R1", "17270S1", "17271X1"]:
+        make_drawing(root / "Assembly" / f"{mark}  - Rev B.pdf", mark, revision="B")
+    reg = build_register(root)
+    cat = reg.categories[0]
+    groups = cat.zone_groups()
+    assert [z for z, _ in groups] == ["1", "2"]
+    assert [r.seq_no for _, recs in groups for r in recs] == ["1", "2", "3", "1", "2"]
+    assert cat.sequences_for("1") == ["172", "173"]
+    assert reg.meta.zones == ["1", "2"]
+
+
+def test_workbook_writes_a_banded_header_per_zone(tmp_path: Path):
+    root = tmp_path / "Stairs at Zone 1 and Zone 2 - 2026-07-06"
+    for mark in ["17172C1", "17271X1"]:
+        make_drawing(root / "Assembly" / f"{mark}  - Rev B.pdf", mark, revision="B")
+    out = write_register(build_register(root), tmp_path / "zoned.xlsx")
+    wb = load_workbook(out)
+    ws = wb["Assembly"]
+    bands = [str(r[0]) for r in ws.iter_rows(values_only=True)
+             if r and r[0] and str(r[0]).startswith("ZONE")]
+    assert len(bands) == 2
+    assert bands[0].startswith("ZONE 1") and "Seq 172" in bands[0]
+    assert bands[1].startswith("ZONE 2") and "Seq 271" in bands[1]
+    wb.close()
+
+
+# ------------------------------------------------------- issue vs issue diff
+
+
+def _issue(tmp_path: Path, name: str, marks: dict[str, str]) -> Path:
+    root = tmp_path / name
+    for mark, rev in marks.items():
+        make_drawing(root / "Assembly" / f"{mark}  - Rev {rev}.pdf", mark, revision=rev)
+    return root
+
+
+def test_compare_issues_reports_added_and_removed(tmp_path: Path):
+    old = _issue(tmp_path, "15. 2026-06-26 Stairs at Zone 1 - Approval",
+                 {"17172C1": "A", "17172C2": "A", "17172C3": "A"})
+    new = _issue(tmp_path, "25. 2026-07-06 Stairs at Zone 1 - Re Approval",
+                 {"17172C1": "A", "17172C2": "B", "17172C9": "A"})
+    result = compare_issues(build_register(old), build_register(new))
+    assert [d.member_name for d in result.added] == ["17172C9"]
+    assert [d.member_name for d in result.removed] == ["17172C3"]
+    assert [d.member_name for d in result.revision_changed] == ["17172C2"]
+    assert [d.member_name for d in result.unchanged] == ["17172C1"]
+    assert not result.is_identical
+
+
+def test_compare_issues_carries_old_and_new_revisions(tmp_path: Path):
+    old = _issue(tmp_path, "old pkg 2026-06-26", {"17172C1": "A"})
+    new = _issue(tmp_path, "new pkg 2026-07-06", {"17172C1": "B"})
+    d = compare_issues(build_register(old), build_register(new)).revision_changed[0]
+    assert (d.old_revision, d.new_revision) == ("A", "B")
+    assert d.zone == "1"
+
+
+def test_identical_issues_compare_clean(tmp_path: Path):
+    old = _issue(tmp_path, "old pkg 2026-06-26", {"17172C1": "A", "17271X1": "A"})
+    new = _issue(tmp_path, "new pkg 2026-07-06", {"17172C1": "A", "17271X1": "A"})
+    result = compare_issues(build_register(old), build_register(new))
+    assert result.is_identical
+    assert result.verdict.startswith("IDENTICAL")
+    assert len(result.unchanged) == 2
+
+
+def test_comparison_report_sheets(tmp_path: Path):
+    old = _issue(tmp_path, "old pkg 2026-06-26", {"17172C1": "A", "17172C3": "A"})
+    new = _issue(tmp_path, "new pkg 2026-07-06", {"17172C1": "B", "17172C9": "A"})
+    result = compare_issues(build_register(old), build_register(new))
+    out = write_comparison_report(result, tmp_path / "diff.xlsx")
+    wb = load_workbook(out)
+    assert "Summary" in wb.sheetnames
+    assert "Added" in wb.sheetnames and "Removed" in wb.sheetnames
+    assert wb["Added"]["A2"].value == "17172C9"
+    assert wb["Removed"]["A2"].value == "17172C3"
+    wb.close()

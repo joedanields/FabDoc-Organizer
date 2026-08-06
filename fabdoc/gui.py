@@ -20,7 +20,9 @@ from tkinter import filedialog, messagebox, ttk
 from . import __app_name__, __version__
 from .categories import discover_categories
 from .config import AppSettings, ExtractionProfile, load_settings, save_settings
-from .excel_out import suggest_register_name, write_register, write_validation_report
+from .compare import IssueComparison, compare_issues
+from .excel_out import (suggest_register_name, write_comparison_report,
+                       write_register, write_validation_report)
 from .extract import dump_text, extract_drawing
 from .folder_meta import ProjectMeta, parse_folder
 from .memberlist import MemberList, preview_columns, read_member_list, sheet_names
@@ -44,6 +46,7 @@ class FabDocApp(ttk.Frame):
         self.register_path: Path | None = None
         self.member_list: MemberList | None = None
         self.result: ValidationResult | None = None
+        self.comparison: IssueComparison | None = None
 
         self._queue: "queue.Queue[tuple]" = queue.Queue()
         self._worker: threading.Thread | None = None
@@ -69,7 +72,8 @@ class FabDocApp(ttk.Frame):
         self.nb.pack(fill="both", expand=True)
         self.nb.add(self._build_generate_tab(), text="  1. Generate Register  ")
         self.nb.add(self._build_validate_tab(), text="  2. Validate Members  ")
-        self.nb.add(self._build_settings_tab(), text="  3. Extraction Settings  ")
+        self.nb.add(self._build_compare_tab(), text="  3. Compare Issues  ")
+        self.nb.add(self._build_settings_tab(), text="  4. Extraction Settings  ")
 
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=(PAD, 0))
@@ -266,6 +270,177 @@ class FabDocApp(ttk.Frame):
 
     # ------------------------------------------------------------------ tab 3
 
+    def _build_compare_tab(self) -> ttk.Frame:
+        tab = ttk.Frame(self, padding=PAD)
+
+        ttk.Label(
+            tab,
+            text="Compare two issues of the same package - \"for Approval\" against "
+                 "\"for Re Approval\" - to see which drawings are new, which were "
+                 "dropped, and which came back at a different revision. Each side can "
+                 "be a package folder or a register workbook.",
+            style="Sub.TLabel", wraplength=1020, justify="left",
+        ).pack(fill="x", pady=(0, PAD))
+
+        self.cmp_vars: dict[str, tk.StringVar] = {}
+        for key, label in [("old", "Older issue"), ("new", "Newer issue")]:
+            box = ttk.LabelFrame(tab, text=label, padding=PAD)
+            box.pack(fill="x", pady=(0, PAD))
+            var = tk.StringVar()
+            self.cmp_vars[key] = var
+            ttk.Entry(box, textvariable=var).pack(side="left", fill="x", expand=True,
+                                                  padx=(0, PAD))
+            ttk.Button(box, text="Folder...",
+                       command=lambda k=key: self._pick_cmp_folder(k)).pack(side="left")
+            ttk.Button(box, text="Workbook...",
+                       command=lambda k=key: self._pick_cmp_file(k)).pack(
+                           side="left", padx=(4, 0))
+
+        run = ttk.Frame(tab)
+        run.pack(fill="x")
+        self.cmp_btn = ttk.Button(run, text="Compare Issues", command=self._start_compare)
+        self.cmp_btn.pack(side="left")
+        self.cmp_export_btn = ttk.Button(run, text="Export Report...",
+                                         command=self._export_comparison, state="disabled")
+        self.cmp_export_btn.pack(side="left", padx=(PAD, 0))
+        self.cmp_progress = ttk.Progressbar(run, mode="determinate")
+        self.cmp_progress.pack(side="left", fill="x", expand=True, padx=(PAD * 2, 0))
+
+        self.cmp_verdict = ttk.Label(tab, text="", style="Sub.TLabel")
+        self.cmp_verdict.pack(fill="x", pady=(PAD, 0))
+
+        res = ttk.Frame(tab)
+        res.pack(fill="both", expand=True, pady=(PAD, 0))
+        self.cmp_nb = ttk.Notebook(res)
+        self.cmp_nb.pack(fill="both", expand=True)
+        self.cmp_trees: dict[str, ttk.Treeview] = {}
+        columns = [("member", "Member Name", 220), ("zone", "Zone", 70),
+                   ("old", "Old Rev", 80), ("new", "New Rev", 80),
+                   ("qty", "Qty Old / New", 120)]
+        for key, title in [("added", "Added"), ("removed", "Removed"),
+                           ("revised", "Revision Changed"), ("unchanged", "Unchanged")]:
+            frame = ttk.Frame(self.cmp_nb, padding=4)
+            tree = ttk.Treeview(frame, columns=[c[0] for c in columns], show="headings")
+            for name, heading, width in columns:
+                tree.heading(name, text=heading)
+                tree.column(name, width=width, anchor="w" if name == "member" else "center")
+            sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=sb.set)
+            tree.pack(side="left", fill="both", expand=True)
+            sb.pack(side="left", fill="y")
+            self.cmp_nb.add(frame, text=f"  {title} (0)  ")
+            self.cmp_trees[key] = tree
+        return tab
+
+    def _pick_cmp_folder(self, key: str) -> None:
+        chosen = filedialog.askdirectory(title=f"Select the {key} issue folder")
+        if chosen:
+            self.cmp_vars[key].set(chosen)
+
+    def _pick_cmp_file(self, key: str) -> None:
+        chosen = filedialog.askopenfilename(
+            title=f"Select the {key} issue register",
+            filetypes=[("Excel workbook", "*.xlsx *.xlsm")],
+        )
+        if chosen:
+            self.cmp_vars[key].set(chosen)
+
+    def _start_compare(self) -> None:
+        if self._worker and self._worker.is_alive():
+            return
+        old_path, new_path = self.cmp_vars["old"].get().strip(), self.cmp_vars["new"].get().strip()
+        if not old_path or not new_path:
+            messagebox.showerror(__app_name__, "Choose both the older and newer issue.")
+            return
+        for p in (old_path, new_path):
+            if not Path(p).exists():
+                messagebox.showerror(__app_name__, f"Not found:\n{p}")
+                return
+
+        self.cmp_btn.configure(state="disabled")
+        self.cmp_export_btn.configure(state="disabled")
+        self.cmp_progress.configure(value=0, maximum=100)
+        self._cancel.clear()
+        settings = self._settings_from_ui()
+
+        def load(path: str) -> Register:
+            p = Path(path)
+            if p.is_dir():
+                return build_register(
+                    p, settings=settings,
+                    progress=lambda d, t, label: self._queue.put(
+                        ("cmp_progress", d, t, f"{p.name[:28]}: {label}")),
+                    should_cancel=self._cancel.is_set,
+                )
+            return read_register(p)
+
+        def work() -> None:
+            try:
+                result = compare_issues(
+                    load(old_path), load(new_path), settings=settings,
+                    old_label=Path(old_path).name, new_label=Path(new_path).name,
+                )
+                self._queue.put(("cmp_done", result))
+            except Exception:
+                self._queue.put(("cmp_error", traceback.format_exc()))
+
+        self._worker = threading.Thread(target=work, daemon=True)
+        self._worker.start()
+
+    def _show_comparison(self, result: IssueComparison) -> None:
+        self.comparison = result
+        for tree in self.cmp_trees.values():
+            for item in tree.get_children():
+                tree.delete(item)
+
+        for key, deltas in [("added", result.added), ("removed", result.removed),
+                            ("revised", result.revision_changed),
+                            ("unchanged", result.unchanged)]:
+            for d in deltas:
+                self.cmp_trees[key].insert(
+                    "", "end",
+                    values=(d.member_name, d.zone or "-", d.old_revision or "-",
+                            d.new_revision or "-", f"{d.old_count} / {d.new_count}"),
+                )
+
+        for idx, (title, count) in enumerate([
+            ("Added", len(result.added)),
+            ("Removed", len(result.removed)),
+            ("Revision Changed", len(result.revision_changed)),
+            ("Unchanged", len(result.unchanged)),
+        ]):
+            self.cmp_nb.tab(idx, text=f"  {title} ({count})  ")
+
+        self.cmp_verdict.configure(
+            text=f"{result.verdict}    "
+                 f"[{result.old_total} drawing(s) -> {result.new_total}]",
+            style="Good.TLabel" if result.is_identical else "Bad.TLabel",
+        )
+        self.cmp_btn.configure(state="normal")
+        self.cmp_export_btn.configure(state="normal")
+        self._set_status(result.verdict)
+
+    def _export_comparison(self) -> None:
+        if not self.comparison:
+            return
+        chosen = filedialog.asksaveasfilename(
+            title="Save comparison report", defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile="Issue Comparison Report.xlsx",
+        )
+        if not chosen:
+            return
+        try:
+            path = write_comparison_report(self.comparison, chosen)
+        except OSError as exc:
+            messagebox.showerror(__app_name__, f"Could not save the report:\n{exc}")
+            return
+        self._set_status(f"Comparison report written: {Path(path).name}")
+        if messagebox.askyesno(__app_name__, f"Report saved to:\n{path}\n\nOpen it now?"):
+            webbrowser.open(Path(path).as_uri())
+
+    # ------------------------------------------------------------------ tab 4
+
     def _build_settings_tab(self) -> ttk.Frame:
         tab = ttk.Frame(self, padding=PAD)
 
@@ -422,14 +597,17 @@ class FabDocApp(ttk.Frame):
     def _current_meta(self) -> ProjectMeta:
         folder = Path(self.folder_var.get().strip())
         base = parse_folder(folder, day_first=self.settings.day_first_dates)
+        typed_date = self.meta_vars["date"].get().strip()
+        # "zone" is a display property over the zones list, so it cannot go
+        # through dataclasses.replace - build the list explicitly.
+        zones = [z.strip() for z in self.meta_vars["zone"].get().split(",") if z.strip()]
         return replace(
             base,
             title=self.meta_vars["title"].get().strip(),
-            zone=self.meta_vars["zone"].get().strip(),
+            zones=zones,
             package=self.meta_vars["package"].get().strip(),
-            date_text=self.meta_vars["date"].get().strip(),
-            issue_date=base.issue_date
-            if base.date_display == self.meta_vars["date"].get().strip() else None,
+            date_text=typed_date,
+            issue_date=base.issue_date if base.date_display == typed_date else None,
         )
 
     def _selected_categories(self) -> list[str]:
@@ -508,6 +686,17 @@ class FabDocApp(ttk.Frame):
                     self._log("Cancelled by user.")
                     self.gen_btn.configure(state="normal")
                     self.cancel_btn.configure(state="disabled")
+                elif kind == "cmp_progress":
+                    _, done, total, label = msg
+                    self.cmp_progress.configure(maximum=max(total, 1), value=done)
+                    self._set_status(f"[{done}/{total}] {label}")
+                elif kind == "cmp_done":
+                    self._show_comparison(msg[1])
+                elif kind == "cmp_error":
+                    self._log(msg[1])
+                    self.cmp_btn.configure(state="normal")
+                    self._set_status("Comparison failed - see log.")
+                    messagebox.showerror(__app_name__, "Comparison failed. See the log on tab 1.")
                 elif kind == "error":
                     _, tb = msg
                     self._log(tb)

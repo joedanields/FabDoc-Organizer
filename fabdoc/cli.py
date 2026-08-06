@@ -14,7 +14,9 @@ from pathlib import Path
 from . import __app_name__, __version__
 from .categories import discover_categories
 from .config import load_settings, save_settings
-from .excel_out import suggest_register_name, write_register, write_validation_report
+from .compare import compare_issues
+from .excel_out import (suggest_register_name, write_comparison_report,
+                        write_register, write_validation_report)
 from .extract import dump_text, extract_drawing
 from .folder_meta import parse_folder
 from .memberlist import read_member_list
@@ -115,6 +117,52 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0 if result.is_clean or not args.strict else 2
 
 
+def _load_side(path_text: str, settings, quiet: bool):
+    """A register from either a package folder or an existing workbook."""
+    p = Path(path_text)
+    if p.is_dir():
+        return build_register(p, settings=settings,
+                              progress=None if quiet else _progress)
+    return read_register(p)
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Compare two issues of the same package."""
+    settings = load_settings(args.settings)
+
+    print(f"Old issue: {args.old}")
+    old = _load_side(args.old, settings, args.quiet)
+    print(f"New issue: {args.new}")
+    new = _load_side(args.new, settings, args.quiet)
+
+    result = compare_issues(
+        old, new, settings=settings, categories=args.categories,
+        old_label=Path(args.old).name, new_label=Path(args.new).name,
+    )
+
+    print()
+    for line in result.summary_lines():
+        print(line)
+
+    if result.added:
+        print("\nAdded in new issue:")
+        for d in result.added[:40]:
+            print(f"  + {d.member_name:<16} zone {d.zone or '-':<4} rev {d.new_revision}")
+        if len(result.added) > 40:
+            print(f"  ... and {len(result.added) - 40} more")
+    if result.removed:
+        print("\nRemoved in new issue:")
+        for d in result.removed[:40]:
+            print(f"  - {d.member_name:<16} zone {d.zone or '-':<4} rev {d.old_revision}")
+        if len(result.removed) > 40:
+            print(f"  ... and {len(result.removed) - 40} more")
+
+    out = Path(args.output) if args.output else Path(args.new).parent / "Issue Comparison Report.xlsx"
+    write_comparison_report(result, out)
+    print(f"\nComparison report written to: {out}")
+    return 0 if result.is_identical or not args.strict else 2
+
+
 def cmd_calibrate(args: argparse.Namespace) -> int:
     """Show what the parser sees in a drawing, then what it extracts."""
     settings = load_settings(args.settings)
@@ -199,6 +247,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Exit with status 2 when discrepancies are found")
     p.add_argument("-q", "--quiet", action="store_true")
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("diff", help="Compare two issues of the same package")
+    p.add_argument("old", help="Older issue: package folder or register .xlsx")
+    p.add_argument("new", help="Newer issue: package folder or register .xlsx")
+    p.add_argument("-o", "--output", help="Output report .xlsx path")
+    p.add_argument("-c", "--categories", nargs="*", default=None,
+                   help="Limit comparison to these drawing categories")
+    p.add_argument("--strict", action="store_true",
+                   help="Exit with status 2 when the issues differ")
+    p.add_argument("-q", "--quiet", action="store_true")
+    p.set_defaults(func=cmd_diff)
 
     p = sub.add_parser("calibrate", help="Inspect one PDF to tune extraction patterns")
     p.add_argument("pdf", help="A representative drawing PDF")
