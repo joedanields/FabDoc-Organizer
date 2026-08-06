@@ -1,8 +1,8 @@
 """Tkinter desktop application.
 
-Three tabs mirroring the workflow: generate a register from a drawing package,
-validate it against the model member list, and tune the extraction rules when a
-new drawing template turns up.
+Four tabs mirroring the workflow: generate a register from a drawing package,
+validate it against the model member list, compare two issues of the same
+package, and tune the extraction rules when a new drawing template turns up.
 """
 
 from __future__ import annotations

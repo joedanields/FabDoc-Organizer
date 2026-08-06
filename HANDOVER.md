@@ -39,10 +39,11 @@ python -m fabdoc                     # desktop GUI (no args)
 python -m fabdoc scan     <folder>   # dry run: show metadata + categories
 python -m fabdoc generate <folder>   # write the register workbook
 python -m fabdoc validate <folder|register.xlsx> <members.xlsx>
+python -m fabdoc diff     <old-issue> <new-issue>   # register vs register
 python -m fabdoc calibrate <one-drawing.pdf> --full-text
 
 python tools/make_sample_project.py sample   # generate test data
-python -m pytest -q                          # 67 tests, ~4s
+python -m pytest -q                          # 85 tests, ~4s
 ```
 
 `python -m fabdoc` with **no arguments opens the GUI**; any argument switches to
@@ -82,8 +83,8 @@ categories.py ──┴───────► register.py ◄─── extract
 | [memberlist.py](fabdoc/memberlist.py) | 192 | Model export import (xlsx/csv/tsv/txt) + column auto-detect |
 | [validate.py](fabdoc/validate.py) | 158 | Register vs **model**: missing / extra / matched / duplicates |
 | [compare.py](fabdoc/compare.py) | 168 | Register vs **register**: added / removed / revised between two issues |
-| [cli.py](fabdoc/cli.py) | 231 | 5 subcommands |
-| [gui.py](fabdoc/gui.py) | 861 | tkinter, 3 tabs, threaded worker |
+| [cli.py](fabdoc/cli.py) | 291 | 6 subcommands |
+| [gui.py](fabdoc/gui.py) | 1030 | tkinter, 4 tabs, threaded worker |
 
 ### The extraction cascade (extract.py)
 
