@@ -1,0 +1,4 @@
+# FabDoc Organizer runtime dependencies.
+# tkinter ships with the standard CPython Windows installer and is not listed here.
+PyMuPDF>=1.23
+openpyxl>=3.1

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabdoc-organizer"
+version = "1.0.0"
+description = "Automated drawing register generation and member validation for steel fabrication packages"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyMuPDF>=1.23",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+fabdoc = "fabdoc.cli:main"
+
+[project.gui-scripts]
+fabdoc-gui = "fabdoc.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["fabdoc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
