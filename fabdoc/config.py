@@ -138,7 +138,15 @@ class ExtractionProfile:
     # "17172C172" is job 17, sequence 172, member C172. The named groups "job"
     # and "seq" are what matter; "seq" drives both the S.No grouping and the
     # zone. Set member_seq_pattern to "" to switch this off entirely.
-    member_seq_pattern: str = r"^(?P<job>\d{2})(?P<seq>\d{3})(?P<rest>[A-Za-z].*)$"
+    #
+    # The sequence is 2 OR 3 digits, and one package routinely mixes both:
+    # "17120B163" is seq 120 while "1710B84" is seq 10. Pinned at 3 digits, the
+    # 2-digit marks matched nothing, got no zone, and were clustered into a
+    # second unlabelled table below the real one - 245 rows of a 968-row
+    # register. The quantifier is greedy so a 3-digit sequence still wins, and
+    # "rest" must start with a letter, which is what stops "10B" being read as
+    # three digits.
+    member_seq_pattern: str = r"^(?P<job>\d{2})(?P<seq>\d{2,3})(?P<rest>[A-Za-z].*)$"
 
     # Zone is the leading digit(s) of the sequence: seq 172 -> zone 1,
     # seq 270 -> zone 2, seq 471 -> zone 4.
