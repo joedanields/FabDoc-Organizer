@@ -484,9 +484,22 @@ def test_zone_tokens_are_not_cut_out_of_the_title():
     ("17270S12", "17", "270", "2"),
     ("17271X211", "17", "271", "2"),
     ("17471C10", "17", "471", "4"),
+    # A package mixes sequence widths: "17120B163" is seq 120 and "1710B84" is
+    # seq 10. Pinned at 3 digits the 2-digit marks got no zone at all and were
+    # clustered into a second unlabelled table - 245 rows of a 968-row register.
+    ("17120B163", "17", "120", "1"),
+    ("1710B84", "17", "10", "1"),
+    ("1710B100", "17", "10", "1"),
+    ("1720S5", "17", "20", "2"),
 ])
 def test_sequence_and_zone_derived_from_member_mark(mark, job, seq, zone):
     assert parse_member_mark(mark) == (job, seq, zone)
+
+
+def test_a_three_digit_sequence_still_wins_over_a_two_digit_reading():
+    """The quantifier is greedy, so 17172C172 must not read as seq 17."""
+    assert parse_member_mark("17172C172")[1] == "172"
+    assert parse_member_mark("17120B163")[1] == "120"
 
 
 def test_marks_that_do_not_encode_a_sequence_are_not_forced():
