@@ -7,8 +7,14 @@ dist/
 venv/
 .pytest_cache/
 sample/
+# Local drawing packages: real client issues, plus anything
+# tools/make_chain_sample.py generates. Reproducible, never committed.
+samples/
 *.xlsx
 !tests/**/*.xlsx
 .vscode/
 .idea/
 *.pdf
+
+# Uploads, generated registers and package trackers written by the web app.
+web/data/
