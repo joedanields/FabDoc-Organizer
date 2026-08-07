@@ -5,8 +5,11 @@ touching code. It records not just what exists but **why**, because several
 decisions here look wrong until you know what they're defending against.
 
 **Status as of 2026-08-07:** feature-complete and **calibrated against a real
-drawing package**, 87 tests passing, working tree clean, `main` pushed to
-`origin`.
+drawing package**, 111 tests passing, working tree clean.
+
+Package tracking (IFA rounds → IFF partial releases, with on-hold reasons) is
+built and verified against the sample package, but **only against synthetic
+fabrication releases** — no real IFF folder has been seen yet. See §6.
 
 The extraction was validated on 119 real drawings: **0 wrong member marks, 0
 wrong revisions**. The title-block patterns needed no change. What did need
@@ -64,12 +67,18 @@ config.py ──────────────► everything (settings + t
 folder_meta.py ─┐
 categories.py ──┴───────► register.py ◄─── extract.py
                               │
-                    ┌─────────┴──────────┐
-              excel_out.py         validate.py ◄─── memberlist.py
-              register_io.py             │
-                    └─────────┬──────────┘
-                        cli.py / gui.py
+          ┌───────────────────┼───────────────────┐
+    excel_out.py        validate.py ◄─── memberlist.py
+    register_io.py            │                   │
+                        compare.py          tracking.py
+                              │             tracking_out.py
+                              └─────────┬─────────┘
+                                  cli.py / gui.py
 ```
+
+`compare.py` answers "what changed between these two issues". `tracking.py`
+answers "what has happened to this package" across every issue, and is the only
+place that knows about IFA/IFF stages.
 
 | File | Lines | Responsibility |
 | --- | ---: | --- |
@@ -83,6 +92,8 @@ categories.py ──┴───────► register.py ◄─── extract
 | [memberlist.py](fabdoc/memberlist.py) | 192 | Model export import (xlsx/csv/tsv/txt) + column auto-detect |
 | [validate.py](fabdoc/validate.py) | 158 | Register vs **model**: missing / extra / matched / duplicates |
 | [compare.py](fabdoc/compare.py) | 168 | Register vs **register**: added / removed / revised between two issues |
+| [tracking.py](fabdoc/tracking.py) | — | **The whole package chain**: IFA rounds then IFF releases. Where "absent = on hold, not removed" lives |
+| [tracking_out.py](fabdoc/tracking_out.py) | — | Tracker workbook: Tracker / Member History / Change Log / On Hold |
 | [cli.py](fabdoc/cli.py) | 291 | 6 subcommands |
 | [gui.py](fabdoc/gui.py) | 1030 | tkinter, 4 tabs, threaded worker |
 
@@ -122,6 +133,10 @@ These look like mistakes if you don't know the reason.
 | **Ambiguous dates read day-first** | `05-03-2024` = 5 March. Indian/European convention. Flip `day_first_dates` for US packages. |
 | **Corrupt PDFs are recorded, not raised** | One bad file in a 1000-drawing package must not cost the run. Errors land on their own row, highlighted orange. |
 | **Tests build real PDFs with PyMuPDF, never mock** | Mocked extraction tests pass while extraction is broken. Every real bug below was caught *because* the tests render actual PDFs. |
+| **Absent ≠ removed once fabrication starts** | The first IFF release rarely carries the whole package — 50 of 119 is normal. The other 69 have not shipped yet; calling them "removed" is a false alarm on the one document the shop floor acts on. They become on-hold rows with a reason. **Do not simplify this back into `compare_issues`.** |
+| **IFF releases accumulate, they do not chain pairwise** | Release 2 carries the *next* slice. Diffing it against release 1 would report the whole first shipment as removed. The last IFA issue is the baseline; each release adds to a running released set; outstanding is baseline − released. |
+| **The stage is never inferred from the folder name** | An IFA folder misread as IFF silently rewrites the approved baseline and reports the rest of the package as unshipped. Wrong here is worse than asking, so `--stage` is required and the GUI picker starts blank. |
+| **Chain state is JSON, not the workbook** | Appending an issue and rebuilding the whole chain are one code path over one file, and history redraws after a reason edit without rescanning thousands of PDFs. |
 
 ---
 
@@ -186,6 +201,13 @@ Four things around the extractor were wrong and are now fixed:
 
 ### Still unproven
 
+- **No real IFF folder has been processed.** The whole fabrication side —
+  partial releases, on-hold reasons, the accumulating baseline — was verified
+  against slices carved out of the `25.` package (50 then 25 of the 119
+  approved), not against a real fabrication issue. What to check when one
+  arrives: that the member marks match the approved issue exactly (a re-marked
+  or re-numbered member will read as *added* plus *on hold*, not as the same
+  member), and that the release really is a subset of the approved scope.
 - **Only one client's template has been seen.** A second detailer will likely
   need `calibrate` run again. The tiered cascade means it will probably degrade
   to the filename tier rather than fail outright — check `member_source`.
@@ -278,6 +300,7 @@ GUI or `--column` on the CLI.
 | 5. Member list import & comparison | `memberlist.py`, `validate.py` | Done, + duplicate detection |
 | Extra: multi-zone clustering | `folder_meta.py`, `excel_out.py` | Done, verified on real data |
 | Extra: issue-to-issue comparison | `compare.py` | Done, verified on real pair |
+| Extra: IFA/IFF package chain + on-hold reasons | `tracking.py`, `tracking_out.py` | Done; IFA side on real data, IFF side synthetic only |
 
 ---
 
