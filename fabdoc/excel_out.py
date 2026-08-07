@@ -35,6 +35,25 @@ _CENTER = Alignment(horizontal="center", vertical="center")
 _LEFT = Alignment(horizontal="left", vertical="center")
 
 
+def _save_workbook(wb: Workbook, out: Path) -> None:
+    """Persist a workbook, turning a locked-file failure into a clear message.
+
+    The register is usually saved over an existing copy, and engineers routinely
+    leave the previous one open in Excel, which holds a lock on the file. Turn
+    that bare PermissionError into something the user can act on instead of a
+    traceback. Any other write problem is also given the failing path.
+    """
+    try:
+        wb.save(out)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Cannot write {out.name} - the file is open in another program "
+            "(Excel, or a file-preview pane). Close it and save again."
+        ) from exc
+    except OSError as exc:
+        raise OSError(f"Could not save the workbook to {out}: {exc}") from exc
+
+
 def _style_header_band(ws: Worksheet, register: Register, category: CategoryRegister,
                        width: int) -> int:
     """Write the project metadata band. Returns the next free row."""
@@ -237,7 +256,7 @@ def write_register(register: Register, output_path: str | Path,
     if not register.categories and not include_summary:
         wb.create_sheet("Register")
 
-    wb.save(out)
+    _save_workbook(wb, out)
     return out
 
 
@@ -349,7 +368,7 @@ def write_comparison_report(result, output_path: str | Path) -> Path:
     if result.quantity_changed:
         sheet("Quantity Changed", result.quantity_changed, _REVIEW_FILL, True)
 
-    wb.save(out)
+    _save_workbook(wb, out)
     return out
 
 
@@ -463,5 +482,5 @@ def write_validation_report(result, output_path: str | Path) -> Path:
              for name, files in result.duplicates_in_drawings.items()], _EXTRA_FILL,
         )
 
-    wb.save(out)
+    _save_workbook(wb, out)
     return out

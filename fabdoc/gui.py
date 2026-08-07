@@ -142,6 +142,16 @@ class FabDocApp(ttk.Frame):
             side="left", fill="x", expand=True, padx=(0, PAD))
         ttk.Button(out_box, text="Save as...", command=self._pick_output).pack(side="left")
 
+        out_box = ttk.LabelFrame(tab, text="Output workbook", padding=PAD)
+        out_box.pack(fill="x", pady=(PAD, 0))
+        self.output_var = tk.StringVar()
+        ttk.Entry(out_box, textvariable=self.output_var).pack(
+            side="left", fill="x", expand=True, padx=(0, PAD))
+        ttk.Button(out_box, text="Save as...", command=self._pick_output).pack(side="left")
+        self.save_default_var = tk.BooleanVar()
+        ttk.Checkbutton(out_box, text="Save as default output folder",
+                        variable=self.save_default_var).pack(side="left", padx=(PAD, 0))
+
         run = ttk.Frame(tab)
         run.pack(fill="x", pady=(PAD, 0))
         self.gen_btn = ttk.Button(run, text="Generate Register",
@@ -581,7 +591,11 @@ class FabDocApp(ttk.Frame):
             self._log(f"Scanned {path}: {len(cats)} categories, {total} PDFs.")
 
         temp = Register(meta=meta, project_folder=path)
-        self.output_var.set(str(path / suggest_register_name(temp)))
+        default_folder = self.settings.default_output_folder
+        if default_folder and Path(default_folder).is_dir():
+            self.output_var.set(str(Path(default_folder) / suggest_register_name(temp)))
+        else:
+            self.output_var.set(str(path / suggest_register_name(temp)))
 
     def _pick_output(self) -> None:
         current = Path(self.output_var.get()) if self.output_var.get() else None
@@ -628,6 +642,16 @@ class FabDocApp(ttk.Frame):
         if not output:
             messagebox.showerror(__app_name__, "Choose where to save the workbook.")
             return
+
+        # Save default output folder if checkbox is checked
+        if self.save_default_var.get():
+            out_path = Path(output)
+            if out_path.parent != Path(folder):
+                self.settings.default_output_folder = str(out_path.parent)
+                try:
+                    save_settings(self.settings)
+                except OSError as exc:
+                    self._log(f"Warning: could not save default output folder: {exc}")
 
         self._clear_log()
         self._log(f"Processing {folder}")

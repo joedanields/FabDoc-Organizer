@@ -186,6 +186,9 @@ class AppSettings:
     # Group register rows under a banded zone header, restarting S.No per zone.
     group_by_zone: bool = True
 
+    # Default output folder for generated registers (empty = project folder)
+    default_output_folder: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile": self.profile.to_dict(),
@@ -197,6 +200,7 @@ class AppSettings:
             "compare_strip_leading_zeros": self.compare_strip_leading_zeros,
             "include_source_column": self.include_source_column,
             "group_by_zone": self.group_by_zone,
+            "default_output_folder": self.default_output_folder,
         }
 
     @classmethod
@@ -208,7 +212,7 @@ class AppSettings:
             "category_aliases", "category_order", "day_first_dates",
             "compare_case_insensitive", "compare_ignore_whitespace",
             "compare_strip_leading_zeros", "include_source_column",
-            "group_by_zone",
+            "group_by_zone", "default_output_folder",
         ):
             if key in data:
                 setattr(s, key, data[key])
