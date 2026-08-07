@@ -1,0 +1,10 @@
+# FabDoc Organizer web front end.
+# The engine's own dependencies (PyMuPDF, openpyxl) come from ../requirements.txt;
+# everything here is transport and is why the web app lives in its own folder.
+# The desktop app must stay installable without any of it.
+-r ../requirements.txt
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+jinja2>=3.1
