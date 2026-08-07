@@ -38,6 +38,7 @@ python -m fabdoc scan     "D:\Projects\Skyline Tower - Zone B - PKG-03 - 12-05-2
 python -m fabdoc generate "D:\Projects\Skyline Tower - Zone B - PKG-03 - 12-05-2024"
 python -m fabdoc validate "D:\Projects\...\issue-25" "D:\Model\members.xlsx"
 python -m fabdoc diff     "D:\Projects\...\issue-15" "D:\Projects\...\issue-25"
+python -m fabdoc track    "D:\Projects\Package Tracker.xlsx"
 ```
 
 `validate` also accepts an already-generated register workbook in place of the
@@ -149,6 +150,61 @@ python -m fabdoc diff "<older issue>" "<newer issue>"
 
 Either side can be a package folder or an already-generated register workbook.
 
+### Tracking a package across every issue
+
+`diff` compares two issues. A package has many: it goes out **IFA** (issued for
+approval), comes back, goes out revised, and repeats until it is signed off -
+then it moves to **IFF** (issued for fabrication), which ships in slices.
+
+Tick **Add this issue to the tracker** and every upload does two things: writes
+its own register, *and* appends itself to one cumulative tracking workbook.
+
+```
+python -m fabdoc generate "<folder>" --track --stage IFA --round 25
+python -m fabdoc generate "<folder>" --track --stage IFF --round 1
+python -m fabdoc track "Package Tracker.xlsx"
+```
+
+The stage is never guessed from the folder name. An approval issue mistaken for
+a fabrication release would rewrite the approved baseline and report the rest of
+the package as unshipped, so it must be stated.
+
+The tracker has four sheets:
+
+| Sheet | What it answers |
+| --- | --- |
+| Tracker | One row per issue: stage, round, date, added / revised / removed / released / on hold |
+| Member History | Member down the side, issue across the top, revision in the cell |
+| Change Log | Every change, flattened, issue by issue |
+| On Hold | Approved members not yet released, and why |
+
+#### Fabrication releases: absent is not removed
+
+The first fabrication release rarely carries the whole package - 50 of 119 is
+normal. Those other 69 members were **not dropped**, they have not shipped yet,
+and reporting them as *removed* would be a false alarm on the one document the
+shop floor acts on.
+
+So once a package reaches IFF, the last IFA issue becomes the **approved
+baseline**, each release adds to a running *released* set, and whatever is left
+is **on hold**. A dialog asks why, taking one reason for the whole batch with
+per-member overrides, and the answers land in the On Hold sheet.
+
+Releases accumulate rather than replacing each other, so release 2 is compared
+against the baseline and everything shipped so far - never against release 1,
+which would report the entire first shipment as removed. Each round asks about a
+smaller balance, with reasons already given carried forward:
+
+```
+IFA-15   107 drawings   first issue
+IFA-25   119 drawings   12 added, 106 revised
+IFF-1     50 drawings   50 released, 69 on hold
+IFF-2     25 drawings   25 released, 44 on hold
+```
+
+Chain state is kept in a `.chain.json` beside the tracker, so the workbook can be
+redrawn after reasons are edited without rescanning a single PDF.
+
 ### 5. Member validation
 
 Import the model export (`.xlsx`, `.csv`, `.tsv` or `.txt`). The member column
@@ -203,8 +259,9 @@ team.
 python -m pytest
 ```
 
-87 tests covering folder parsing, category detection, all four extraction tiers,
-sorting, workbook naming, structure and round-trip, member-list import, and the
-validation logic, zone derivation and issue-to-issue comparison. They build real
+111 tests covering folder parsing, category detection, all four extraction tiers,
+sorting, workbook naming, structure and round-trip, member-list import, the
+validation logic, zone derivation, issue-to-issue comparison, and the IFA/IFF
+package chain. They build real
 PDFs with PyMuPDF rather than mocking, so the extraction cascade is genuinely
 exercised.
