@@ -13,7 +13,6 @@ and what matched.
 ## Install
 
 Requires Python 3.10 or later.
-
 ```
 pip install -r requirements.txt
 ```
