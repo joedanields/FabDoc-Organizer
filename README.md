@@ -104,6 +104,11 @@ register, so the uncertainty is on the page rather than hidden.
 One workbook, one worksheet per category, three columns:
 `S.No | Member Name | Revision No`.
 
+The workbook takes the name of the package folder, so
+`Skyline Tower - Zone B - PKG-03 - 12-05-2024` writes
+`Skyline Tower - Zone B - PKG-03 - 12-05-2024.xlsx` beside it. Pass `-o` on the
+CLI, or edit the output box in the app, to put it somewhere else.
+
 Project title, issue date and zones are stated **once** in the header band above
 the table, not repeated on every row. Set `include_source_column` to `true` in
 settings to add `Source File` and `Notes` when you need to trace a flagged row
@@ -198,8 +203,8 @@ team.
 python -m pytest
 ```
 
-85 tests covering folder parsing, category detection, all four extraction tiers,
-sorting, workbook structure and round-trip, member-list import, and the
+87 tests covering folder parsing, category detection, all four extraction tiers,
+sorting, workbook naming, structure and round-trip, member-list import, and the
 validation logic, zone derivation and issue-to-issue comparison. They build real
 PDFs with PyMuPDF rather than mocking, so the extraction cascade is genuinely
 exercised.
