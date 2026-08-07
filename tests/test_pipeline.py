@@ -14,8 +14,8 @@ from conftest import make_drawing
 from fabdoc.categories import classify_folder_name, discover_categories, safe_sheet_name
 from fabdoc.config import AppSettings, ExtractionProfile
 from fabdoc.compare import compare_issues
-from fabdoc.excel_out import (write_comparison_report, write_register,
-                              write_validation_report)
+from fabdoc.excel_out import (suggest_register_name, write_comparison_report,
+                              write_register, write_validation_report)
 from fabdoc.extract import (SOURCE_FILENAME, SOURCE_LARGEST, extract_drawing,
                             parse_member_mark)
 from fabdoc.folder_meta import parse_folder_name
@@ -295,6 +295,19 @@ def test_single_category_workbook_has_one_register_sheet(single_category_folder:
     wb = load_workbook(out)
     assert [s for s in wb.sheetnames if s != "Summary"] == ["Erection"]
     wb.close()
+
+
+def test_suggested_name_matches_the_source_folder(project_folder: Path):
+    """The register is filed next to its issue, so the names must agree."""
+    reg = build_register(project_folder)
+    assert suggest_register_name(reg) == f"{project_folder.name}.xlsx"
+
+
+def test_suggested_name_falls_back_when_the_folder_has_no_name(project_folder: Path):
+    reg = build_register(project_folder)
+    reg.project_folder = Path("D:\\")  # a drive root has no name of its own
+    assert suggest_register_name(reg).endswith(".xlsx")
+    assert "/" not in suggest_register_name(reg)
 
 
 def test_register_round_trips_through_excel(project_folder: Path, tmp_path: Path):
