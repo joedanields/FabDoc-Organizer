@@ -26,6 +26,22 @@ OUTPUT_ROOT = DATA_ROOT / "output"
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9 ._()\-]+")
 
+# Session ids are minted by new_session() and are nothing but hex. The client
+# hands one back on every later request, so it is untrusted text that ends up
+# joined onto a filesystem path - and clear_session() deletes what it points at.
+# Anything not of this exact shape is refused rather than sanitised.
+_SESSION_RE = re.compile(r"^[0-9a-f]{8,32}$")
+
+
+class InvalidSession(ValueError):
+    """Raised when a session id could not have come from new_session()."""
+
+
+def _checked_session(session_id: str) -> str:
+    if not _SESSION_RE.match(session_id or ""):
+        raise InvalidSession(f"Invalid session id: {session_id!r}")
+    return session_id
+
 
 def ensure_roots() -> None:
     for path in (UPLOAD_ROOT, TRACKER_ROOT, OUTPUT_ROOT):
@@ -59,7 +75,8 @@ def safe_relative(raw: str) -> Path | None:
 
 
 def workspace_for(session_id: str) -> Path:
-    return UPLOAD_ROOT / session_id
+    """The upload directory for a session. Raises on anything malformed."""
+    return UPLOAD_ROOT / _checked_session(session_id)
 
 
 def package_root(session_id: str) -> Path | None:
@@ -68,7 +85,10 @@ def package_root(session_id: str) -> Path | None:
     A directory upload arrives as ``<package>/<category>/<drawing>.pdf``, so the
     single child of the workspace is the package the engineer chose.
     """
-    root = workspace_for(session_id)
+    try:
+        root = workspace_for(session_id)
+    except InvalidSession:
+        return None
     if not root.is_dir():
         return None
     children = [p for p in root.iterdir() if p.is_dir()]
@@ -99,5 +119,17 @@ def clear_session(session_id: str) -> None:
 
     A package is thousands of files and the server has no reason to keep them:
     everything the tracker needs is already in the chain state.
+
+    This deletes a whole directory tree from a client-supplied id, so it refuses
+    anything it did not mint and re-checks containment after resolving. A bad id
+    is a silent no-op: the caller is finishing a successful run, and there is
+    nothing useful it could do with the failure.
     """
-    shutil.rmtree(workspace_for(session_id), ignore_errors=True)
+    try:
+        target = workspace_for(session_id).resolve()
+    except InvalidSession:
+        return
+    # Belt and braces: never recurse outside the upload root, whatever the id.
+    if target.parent != UPLOAD_ROOT.resolve() or not target.is_dir():
+        return
+    shutil.rmtree(target, ignore_errors=True)
