@@ -195,6 +195,10 @@ $("hold-cancel").onclick = () => {
 };
 
 $("hold-save").onclick = async () => {
+  if (!project) {                       // nothing tracked yet: nothing to save against
+    $("hold-backdrop").hidden = true;
+    return;
+  }
   const reasons = {};
   document.querySelectorAll("#hold-table tbody tr").forEach((tr) => {
     const value = tr.querySelector(".reason").value.trim();
