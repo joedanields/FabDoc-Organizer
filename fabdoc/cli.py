@@ -22,6 +22,10 @@ from .folder_meta import parse_folder
 from .memberlist import read_member_list
 from .register import build_register
 from .register_io import read_register
+from .tracking import (STAGE_IFF, STAGES, ChainState, IssueEntry, apply_reasons,
+                       build_chain, load_state, project_name_from, save_state,
+                       snapshot_register, state_path_for)
+from .tracking_out import write_tracker
 from .validate import validate
 
 
@@ -82,6 +86,119 @@ def cmd_generate(args: argparse.Namespace) -> int:
     if register.review_count:
         print(f"{register.review_count} row(s) flagged for review (highlighted in the workbook).")
     print(f"Register written to: {out}")
+
+    if args.track:
+        # The stage is never guessed: an IFA folder misread as IFF would report
+        # the unshipped balance as on hold and quietly rewrite the baseline.
+        if not args.stage:
+            print("\n--track needs --stage IFA or --stage IFF.", file=sys.stderr)
+            return 1
+        _track_issue(args, settings, folder, register)
+    return 0
+
+
+def _default_tracker(settings, folder: Path) -> Path:
+    """Where the tracker lives when the user has not named one."""
+    base = Path(settings.default_output_folder or folder)
+    return base / "Package Tracker.xlsx"
+
+
+def _print_tracker(chain) -> None:
+    print(f"\n{'#':<3}{'Code':<9}{'Issue':<42}{'Drawings':>9}   Status")
+    print("-" * 100)
+    steps = [None] + list(chain.steps)
+    for idx, entry in enumerate(chain.issues, start=1):
+        step = steps[idx - 1] if idx - 1 < len(steps) else None
+        status = step.verdict if step else "first issue"
+        print(f"{idx:<3}{entry.code:<9}{entry.label[:40]:<42}{entry.total:>9}   {status}")
+
+
+def _report_holds(chain, tracker: Path) -> None:
+    """Tell the user what is outstanding and what still needs a reason."""
+    outstanding = chain.outstanding
+    if not outstanding:
+        return
+    missing = chain.missing_reasons()
+    print(f"\n{len(outstanding)} approved member(s) have not been released yet "
+          f"(on hold, not removed).")
+    for hold in outstanding[:15]:
+        why = hold.reason or "** no reason recorded **"
+        print(f"  {hold.member_name:<14} rev {hold.revision or '-':<3} "
+              f"held since {hold.held_since[:26]:<28} {why}")
+    if len(outstanding) > 15:
+        print(f"  ... and {len(outstanding) - 15} more")
+    if missing:
+        print(f"\n{len(missing)} of them have no reason recorded. Supply one with:")
+        print(f'  python -m fabdoc track "{tracker}" --reason "why they are held"')
+
+
+def _track_issue(args: argparse.Namespace, settings, folder: Path, register) -> Path:
+    """Append one issue to its package chain and rewrite the tracker."""
+    tracker = Path(args.tracker) if args.tracker else _default_tracker(settings, folder)
+    state = load_state(state_path_for(tracker))
+
+    if not state.project:
+        state.project = project_name_from(register.meta.title)
+
+    state.add_issue(IssueEntry(
+        label=folder.name,
+        stage=args.stage.upper(),
+        round_no=args.round or register.meta.issue_no,
+        date_text=register.meta.date_display,
+        folder=str(folder),
+        members=snapshot_register(register),
+    ))
+
+    chain = build_chain(state, settings)
+    if args.hold_reason:
+        apply_reasons(state, {h.member_name: args.hold_reason
+                              for h in chain.outstanding if h.needs_reason}, settings)
+        chain = build_chain(state, settings)
+
+    save_state(state, state_path_for(tracker))
+    write_tracker(chain, tracker)
+
+    _print_tracker(chain)
+    _report_holds(chain, tracker)
+    print(f"\nTracker updated: {tracker}")
+    return tracker
+
+
+def cmd_track(args: argparse.Namespace) -> int:
+    """Rebuild a tracker from its saved chain, optionally recording reasons.
+
+    No PDF is rescanned: the chain state holds each issue's members, so the
+    workbook can be redrawn after reasons are supplied.
+    """
+    settings = load_settings(args.settings)
+    tracker = Path(args.tracker)
+    state_file = state_path_for(tracker)
+    if not state_file.exists():
+        print(f"No chain state beside {tracker.name}.\n"
+              f"Track an issue first:  python -m fabdoc generate <folder> "
+              f"--stage IFA --round 1 --track", file=sys.stderr)
+        return 1
+
+    state = load_state(state_file)
+    chain = build_chain(state, settings)
+
+    if args.reason:
+        targets = {h.member_name: args.reason for h in chain.outstanding
+                   if h.needs_reason or args.overwrite_reasons}
+        if not targets:
+            print("Every outstanding member already has a reason. "
+                  "Pass --overwrite-reasons to replace them.")
+        apply_reasons(state, targets, settings)
+        save_state(state, state_file)
+        chain = build_chain(state, settings)
+        print(f"Reason recorded against {len(targets)} member(s).")
+
+    write_tracker(chain, tracker)
+    print(f"Project: {chain.project}")
+    print(f"Approved baseline: {chain.baseline_label or '(none yet)'}")
+    _print_tracker(chain)
+    _report_holds(chain, tracker)
+    print(f"\nTracker written to: {tracker}")
     return 0
 
 
@@ -233,7 +350,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-c", "--categories", nargs="*", default=None,
                    help="Limit to these categories (default: all found)")
     p.add_argument("-q", "--quiet", action="store_true")
+    p.add_argument("--track", action="store_true",
+                   help="Also append this issue to the package tracker")
+    p.add_argument("--stage", choices=[s.lower() for s in STAGES] + list(STAGES),
+                   default=None,
+                   help="IFA (issued for approval) or IFF (issued for fabrication). "
+                        "Required with --track; never guessed from the folder name.")
+    p.add_argument("--round", default=None,
+                   help="Issue round, e.g. 25 for an IFA or 2 for the second IFF "
+                        "release (default: the leading number of the folder name)")
+    p.add_argument("--tracker", default=None,
+                   help="Tracker workbook path (default: 'Package Tracker.xlsx' "
+                        "in the output folder)")
+    p.add_argument("--hold-reason", default=None,
+                   help="Reason to record against members this IFF release left behind")
     p.set_defaults(func=cmd_generate)
+
+    p = sub.add_parser("track", help="Rebuild the package tracker and show what is on hold")
+    p.add_argument("tracker", help="Tracker workbook written by 'generate --track'")
+    p.add_argument("--reason", default=None,
+                   help="Record this reason against outstanding members")
+    p.add_argument("--overwrite-reasons", action="store_true",
+                   help="Replace reasons already recorded, not just the blank ones")
+    p.set_defaults(func=cmd_track)
 
     p = sub.add_parser("validate", help="Compare a register against the model member list")
     p.add_argument("register", help="Project folder to scan, or an existing register .xlsx")
