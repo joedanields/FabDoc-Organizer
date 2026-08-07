@@ -4,9 +4,9 @@ Written for whoever (human or agent) picks this up next, cold. Read this before
 touching code. It records not just what exists but **why**, because several
 decisions here look wrong until you know what they're defending against.
 
-**Status as of 2026-08-06:** feature-complete and **calibrated against a real
-drawing package**, 85 tests passing, 10 commits on `main`, working tree clean,
-**nothing pushed** to `origin`.
+**Status as of 2026-08-07:** feature-complete and **calibrated against a real
+drawing package**, 87 tests passing, working tree clean, `main` pushed to
+`origin`.
 
 The extraction was validated on 119 real drawings: **0 wrong member marks, 0
 wrong revisions**. The title-block patterns needed no change. What did need
@@ -43,7 +43,7 @@ python -m fabdoc diff     <old-issue> <new-issue>   # register vs register
 python -m fabdoc calibrate <one-drawing.pdf> --full-text
 
 python tools/make_sample_project.py sample   # generate test data
-python -m pytest -q                          # 85 tests, ~4s
+python -m pytest -q                          # 87 tests, ~4s
 ```
 
 `python -m fabdoc` with **no arguments opens the GUI**; any argument switches to
