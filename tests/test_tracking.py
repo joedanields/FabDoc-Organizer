@@ -182,6 +182,13 @@ def test_missing_state_file_yields_an_empty_chain(tmp_path: Path):
     "Stairs at Zone 1 and Zone 2 for Re Approval",
     "Stairs at Zone 1 and Zone 2 for Re-Approval",
     "Stairs at Zone 1 and Zone 2 for Fabrication",
+    # A stage-coded folder prefix survives folder_meta, which only lifts a
+    # numeric "25." into issue_no. Left in, the fabrication issues chained into
+    # their own tracker and the on-hold rule silently switched itself off.
+    "IFF-0    Stairs at Zone 1 and Zone 2 for Fabrication",
+    "IFF-3 Stairs at Zone 1 and Zone 2 for Fabrication",
+    "IFA-2 Stairs at Zone 1 and Zone 2 for Re Approval",
+    "IFF 1 - Stairs at Zone 1 and Zone 2",
 ])
 def test_every_issue_purpose_maps_to_one_project(title: str):
     assert project_name_from(title) == "Stairs at Zone 1 and Zone 2"
