@@ -10,6 +10,10 @@ worksheet per category. Then it compares that register against the member list
 exported from the structural model and reports what is missing, what is extra,
 and what matched.
 
+> **New here?** [USER_GUIDE.md](USER_GUIDE.md) covers how to drive it so the
+> output is trustworthy, and where to look when you need to prove why a row says
+> what it says. This page is the feature reference.
+
 ## Install
 
 Requires Python 3.10 or later.
