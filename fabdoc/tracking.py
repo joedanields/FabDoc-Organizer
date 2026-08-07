@@ -28,6 +28,7 @@ so the GUI can populate them from a dialog and the CLI from a flag.
 from __future__ import annotations
 
 import json
+import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +42,23 @@ STAGE_IFA = "IFA"   # Issued For Approval
 STAGE_IFF = "IFF"   # Issued For Fabrication
 
 STAGES = (STAGE_IFA, STAGE_IFF)
+
+# "Stairs at Zone 1 and Zone 2 for Re Approval" -> "Stairs at Zone 1 and Zone 2".
+_PURPOSE_CLAUSE = re.compile(
+    r"\s+for\s+(?:re[\s-]*)?(?:approval|fabrication|construction|review|comment)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def project_name_from(title: str) -> str:
+    """Strip the issue-purpose clause so every issue maps to one project.
+
+    Folder titles carry the purpose of that particular issue - "for Approval",
+    then "for Re Approval", then "for Fabrication". The purpose changes every
+    time; the package does not. Left in, each issue would look like a different
+    project and never chain together.
+    """
+    return _PURPOSE_CLAUSE.sub("", title or "").strip(" -_") or (title or "").strip()
 
 
 # ---------------------------------------------------------------------------
