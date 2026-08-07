@@ -141,13 +141,6 @@ class FabDocApp(ttk.Frame):
         ttk.Entry(out_box, textvariable=self.output_var).pack(
             side="left", fill="x", expand=True, padx=(0, PAD))
         ttk.Button(out_box, text="Save as...", command=self._pick_output).pack(side="left")
-
-        out_box = ttk.LabelFrame(tab, text="Output workbook", padding=PAD)
-        out_box.pack(fill="x", pady=(PAD, 0))
-        self.output_var = tk.StringVar()
-        ttk.Entry(out_box, textvariable=self.output_var).pack(
-            side="left", fill="x", expand=True, padx=(0, PAD))
-        ttk.Button(out_box, text="Save as...", command=self._pick_output).pack(side="left")
         self.save_default_var = tk.BooleanVar()
         ttk.Checkbutton(out_box, text="Save as default output folder",
                         variable=self.save_default_var).pack(side="left", padx=(PAD, 0))
