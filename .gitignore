@@ -11,3 +11,4 @@ sample/
 !tests/**/*.xlsx
 .vscode/
 .idea/
+*.pdf
