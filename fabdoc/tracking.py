@@ -49,16 +49,25 @@ _PURPOSE_CLAUSE = re.compile(
     re.IGNORECASE,
 )
 
+# "IFF-3 Stairs at Zone 1" -> "Stairs at Zone 1". A numeric "25." prefix is
+# already lifted into ProjectMeta.issue_no by folder_meta, but a stage-coded
+# prefix is not, and it survives into the title.
+_LEADING_STAGE = re.compile(r"^(?:IFA|IFF)\b[\s\-_:#]*\d*[\s.\-_:)]*", re.IGNORECASE)
+
 
 def project_name_from(title: str) -> str:
-    """Strip the issue-purpose clause so every issue maps to one project.
+    """Reduce an issue title to the package it belongs to.
 
-    Folder titles carry the purpose of that particular issue - "for Approval",
-    then "for Re Approval", then "for Fabrication". The purpose changes every
-    time; the package does not. Left in, each issue would look like a different
-    project and never chain together.
+    Folder titles carry the identity of that one delivery: a leading stage code
+    ("IFF-3"), and a trailing purpose clause ("for Approval", then "for Re
+    Approval", then "for Fabrication"). Both change every issue while the package
+    does not. Left in, each issue looks like a different project, lands in its own
+    tracker, and nothing ever chains - which also silently disables the on-hold
+    rule, because a release with no prior approval issue becomes its own baseline.
     """
-    return _PURPOSE_CLAUSE.sub("", title or "").strip(" -_") or (title or "").strip()
+    text = _LEADING_STAGE.sub("", title or "")
+    text = _PURPOSE_CLAUSE.sub("", text)
+    return text.strip(" -_") or (title or "").strip()
 
 
 # ---------------------------------------------------------------------------
