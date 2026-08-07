@@ -16,6 +16,11 @@
 
 * { box-sizing: border-box; }
 
+/* The `hidden` attribute is a UA-stylesheet rule, so any author rule that sets
+   `display` beats it - .backdrop { display: flex } left the hold dialog covering
+   the page from load. Author-level and !important so `hidden` always wins. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
