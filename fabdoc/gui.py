@@ -28,9 +28,157 @@ from .folder_meta import ProjectMeta, parse_folder
 from .memberlist import MemberList, preview_columns, read_member_list, sheet_names
 from .register import Register, build_register
 from .register_io import read_register
+from .tracking import (STAGE_IFA, STAGE_IFF, STAGES, ChainState, HoldRecord,
+                       IssueEntry, apply_reasons, build_chain, load_state,
+                       project_name_from, save_state, snapshot_register,
+                       state_path_for)
+from .tracking_out import write_tracker
 from .validate import ValidationResult, validate
 
 PAD = 8
+
+
+class HoldReasonDialog(tk.Toplevel):
+    """Ask why approved members were left out of a fabrication release.
+
+    Fabrication ships the approved scope in slices, so a release routinely
+    leaves members behind. They are not dropped drawings and must not be
+    reported as removed - but somebody has to say *why* each one is waiting,
+    because that is the question the shop floor asks.
+
+    Most of a release is held for one shared reason, so a batch entry fills
+    everything at once and individual rows can then be overridden. Reasons
+    already recorded in an earlier release are pre-filled rather than asked
+    again from scratch.
+    """
+
+    def __init__(self, master: tk.Misc, holds: list[HoldRecord], release_label: str,
+                 released: int) -> None:
+        super().__init__(master)
+        self.title(f"{__app_name__} - members on hold")
+        self.transient(master)
+        self.geometry("880x560")
+        self.minsize(700, 440)
+        self.result: dict[str, str] | None = None
+        self._holds = holds
+
+        frame = ttk.Frame(self, padding=PAD)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            frame,
+            text=f"{release_label}\n\n"
+                 f"{released} member(s) released, {len(holds)} approved member(s) not in "
+                 f"this release.\n"
+                 f"They are on hold, not removed - fabrication ships the approved scope in "
+                 f"slices. State why they are waiting; the reason is written into the "
+                 f"tracker.",
+            style="Sub.TLabel", wraplength=830, justify="left",
+        ).pack(fill="x", pady=(0, PAD))
+
+        batch = ttk.LabelFrame(frame, text="Reason for all outstanding members", padding=PAD)
+        batch.pack(fill="x")
+        self.batch_var = tk.StringVar()
+        entry = ttk.Entry(batch, textvariable=self.batch_var)
+        entry.pack(side="left", fill="x", expand=True, padx=(0, PAD))
+        ttk.Button(batch, text="Apply to all", command=self._apply_all).pack(side="left")
+        entry.focus_set()
+
+        cols = ("member", "zone", "rev", "since", "reason")
+        tree_box = ttk.LabelFrame(
+            frame, text="Select rows to give them a different reason", padding=4)
+        tree_box.pack(fill="both", expand=True, pady=(PAD, 0))
+        self.tree = ttk.Treeview(tree_box, columns=cols, show="headings",
+                                 selectmode="extended")
+        for name, heading, width, anchor in [
+            ("member", "Member Name", 150, "w"),
+            ("zone", "Zone", 60, "center"),
+            ("rev", "Approved Rev", 100, "center"),
+            ("since", "On Hold Since", 200, "w"),
+            ("reason", "Reason", 300, "w"),
+        ]:
+            self.tree.heading(name, text=heading)
+            self.tree.column(name, width=width, anchor=anchor)
+        sb = ttk.Scrollbar(tree_box, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        for hold in holds:
+            self.tree.insert("", "end", iid=hold.member_name, values=(
+                hold.member_name, hold.zone or "-", hold.revision or "-",
+                hold.held_since, hold.reason,
+            ))
+
+        sel = ttk.Frame(frame)
+        sel.pack(fill="x", pady=(PAD, 0))
+        ttk.Label(sel, text="Reason for selected").pack(side="left", padx=(0, 4))
+        self.sel_var = tk.StringVar()
+        ttk.Entry(sel, textvariable=self.sel_var).pack(
+            side="left", fill="x", expand=True, padx=(0, PAD))
+        ttk.Button(sel, text="Apply to selected",
+                   command=self._apply_selected).pack(side="left")
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(PAD, 0))
+        self.count_label = ttk.Label(buttons, text="", style="Sub.TLabel")
+        self.count_label.pack(side="left")
+        ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right")
+        ttk.Button(buttons, text="Save Reasons",
+                   command=self._accept).pack(side="right", padx=(0, PAD))
+
+        self._refresh_count()
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda _e: self._cancel())
+        self.grab_set()
+
+    # -- helpers ------------------------------------------------------------
+
+    def _set_reason(self, iid: str, reason: str) -> None:
+        values = list(self.tree.item(iid, "values"))
+        values[4] = reason
+        self.tree.item(iid, values=values)
+
+    def _apply_all(self) -> None:
+        reason = self.batch_var.get().strip()
+        if not reason:
+            return
+        for iid in self.tree.get_children():
+            self._set_reason(iid, reason)
+        self._refresh_count()
+
+    def _apply_selected(self) -> None:
+        reason = self.sel_var.get().strip()
+        selected = self.tree.selection()
+        if not reason or not selected:
+            return
+        for iid in selected:
+            self._set_reason(iid, reason)
+        self._refresh_count()
+
+    def _collected(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for iid in self.tree.get_children():
+            reason = str(self.tree.item(iid, "values")[4]).strip()
+            if reason:
+                out[iid] = reason
+        return out
+
+    def _refresh_count(self) -> None:
+        blank = len(self.tree.get_children()) - len(self._collected())
+        self.count_label.configure(
+            text="Every member has a reason."
+            if not blank else
+            f"{blank} member(s) still have no reason - they will be highlighted "
+            f"in the tracker."
+        )
+
+    def _accept(self) -> None:
+        self.result = self._collected()
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.destroy()
 
 
 class FabDocApp(ttk.Frame):
@@ -47,6 +195,7 @@ class FabDocApp(ttk.Frame):
         self.member_list: MemberList | None = None
         self.result: ValidationResult | None = None
         self.comparison: IssueComparison | None = None
+        self.tracker_path: Path | None = None
 
         self._queue: "queue.Queue[tuple]" = queue.Queue()
         self._worker: threading.Thread | None = None
@@ -144,6 +293,33 @@ class FabDocApp(ttk.Frame):
         self.save_default_var = tk.BooleanVar()
         ttk.Checkbutton(out_box, text="Save as default output folder",
                         variable=self.save_default_var).pack(side="left", padx=(PAD, 0))
+
+        trk = ttk.LabelFrame(
+            tab, text="Package tracker (chains every issue of this package)", padding=PAD)
+        trk.pack(fill="x", pady=(PAD, 0))
+        self.track_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(trk, text="Add this issue to the tracker",
+                        variable=self.track_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(trk, text="Stage").grid(row=0, column=1, sticky="e", padx=(PAD * 2, 4))
+        # Deliberately blank: an IFA folder mistaken for IFF would rewrite the
+        # approved baseline and report the unshipped balance as on hold.
+        self.stage_combo = ttk.Combobox(trk, state="readonly", width=8, values=list(STAGES))
+        self.stage_combo.grid(row=0, column=2, sticky="w")
+        ttk.Label(trk, text="Round").grid(row=0, column=3, sticky="e", padx=(PAD * 2, 4))
+        self.round_var = tk.StringVar()
+        ttk.Entry(trk, textvariable=self.round_var, width=8).grid(row=0, column=4, sticky="w")
+        ttk.Label(trk, text="IFA = for approval,  IFF = for fabrication",
+                  style="Sub.TLabel").grid(row=0, column=5, sticky="w", padx=(PAD * 2, 0))
+
+        ttk.Label(trk, text="Tracker").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.tracker_var = tk.StringVar()
+        ttk.Entry(trk, textvariable=self.tracker_var).grid(
+            row=1, column=1, columnspan=5, sticky="we", pady=(6, 0), padx=(0, PAD))
+        ttk.Button(trk, text="Browse...", command=self._pick_tracker).grid(
+            row=1, column=6, pady=(6, 0))
+        ttk.Button(trk, text="Open Tracker", command=self._open_tracker).grid(
+            row=0, column=6, sticky="e")
+        trk.columnconfigure(5, weight=1)
 
         run = ttk.Frame(tab)
         run.pack(fill="x", pady=(PAD, 0))
@@ -586,9 +762,16 @@ class FabDocApp(ttk.Frame):
         temp = Register(meta=meta, project_folder=path)
         default_folder = self.settings.default_output_folder
         if default_folder and Path(default_folder).is_dir():
-            self.output_var.set(str(Path(default_folder) / suggest_register_name(temp)))
+            out_dir = Path(default_folder)
         else:
-            self.output_var.set(str(path / suggest_register_name(temp)))
+            out_dir = path
+        self.output_var.set(str(out_dir / suggest_register_name(temp)))
+
+        # The round is the leading "25." of the folder name; the stage is not
+        # guessed, so it stays blank until the engineer says which it is.
+        self.round_var.set(meta.issue_no)
+        if not self.tracker_var.get().strip():
+            self.tracker_var.set(str(out_dir / "Package Tracker.xlsx"))
 
     def _pick_output(self) -> None:
         current = Path(self.output_var.get()) if self.output_var.get() else None
@@ -635,6 +818,21 @@ class FabDocApp(ttk.Frame):
         if not output:
             messagebox.showerror(__app_name__, "Choose where to save the workbook.")
             return
+        if self.track_var.get():
+            if not self.stage_combo.get():
+                messagebox.showerror(
+                    __app_name__,
+                    "Choose the stage before adding this issue to the tracker.\n\n"
+                    "IFA - issued for approval\n"
+                    "IFF - issued for fabrication\n\n"
+                    "It is never guessed from the folder name: an approval issue "
+                    "mistaken for a fabrication release would rewrite the approved "
+                    "baseline and report the rest of the package as on hold.",
+                )
+                return
+            if not self.tracker_var.get().strip():
+                messagebox.showerror(__app_name__, "Choose where to save the tracker.")
+                return
 
         # Save default output folder if checkbox is checked
         if self.save_default_var.get():
@@ -758,6 +956,110 @@ class FabDocApp(ttk.Frame):
                 f"highlighted in the workbook. If that count is high, tune the patterns "
                 f"in the Extraction Settings tab and run again.",
             )
+
+        if self.track_var.get():
+            # The register is already safely written. A tracker problem must be
+            # reported as a message, not lost as a traceback on a console the
+            # engineer never sees.
+            try:
+                self._track_issue(reg)
+            except Exception:
+                self._log(traceback.format_exc())
+                self._set_status("Register written, but the tracker failed - see log.")
+                messagebox.showerror(
+                    __app_name__,
+                    "The register was written, but the package tracker could not be "
+                    "updated. See the log for details.",
+                )
+
+    # -- tracker ------------------------------------------------------------
+
+    def _pick_tracker(self) -> None:
+        current = self.tracker_var.get().strip()
+        chosen = filedialog.asksaveasfilename(
+            title="Package tracker workbook", defaultextension=".xlsx",
+            filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile=Path(current).name if current else "Package Tracker.xlsx",
+            initialdir=str(Path(current).parent) if current else None,
+            confirmoverwrite=False,   # an existing tracker is appended to, not replaced
+        )
+        if chosen:
+            self.tracker_var.set(chosen)
+
+    def _open_tracker(self) -> None:
+        path = self.tracker_path or (
+            Path(self.tracker_var.get().strip()) if self.tracker_var.get().strip() else None
+        )
+        if path and path.exists():
+            webbrowser.open(path.as_uri())
+        else:
+            messagebox.showinfo(__app_name__, "No tracker has been written yet.")
+
+    def _track_issue(self, reg: Register) -> None:
+        """Append the generated issue to its package chain and refresh the tracker.
+
+        Runs on the UI thread: the chain is built from the register already in
+        memory, so nothing here re-reads a PDF.
+        """
+        tracker = Path(self.tracker_var.get().strip())
+        state_file = state_path_for(tracker)
+        state = load_state(state_file)
+        stage = self.stage_combo.get()
+
+        if not state.project:
+            state.project = project_name_from(reg.meta.title)
+
+        folder = Path(self.folder_var.get().strip())
+        state.add_issue(IssueEntry(
+            label=folder.name,
+            stage=stage,
+            round_no=self.round_var.get().strip() or reg.meta.issue_no,
+            date_text=reg.meta.date_display,
+            folder=str(folder),
+            members=snapshot_register(reg),
+        ))
+
+        settings = self._settings_from_ui()
+        chain = build_chain(state, settings)
+        step = chain.steps[-1] if chain.steps else None
+
+        # A fabrication release that left approved members behind is the moment
+        # to ask why - the answer is only in the engineer's head right now.
+        if stage == STAGE_IFF and step and step.on_hold:
+            dialog = HoldReasonDialog(
+                self.master, list(step.on_hold),
+                release_label=f"{folder.name}   [{stage}-{self.round_var.get().strip()}]",
+                released=len(step.released),
+            )
+            self.master.wait_window(dialog)
+            if dialog.result is None:
+                self._log("Tracker not updated - hold reasons were cancelled.")
+                self._set_status("Tracker not updated.")
+                return
+            apply_reasons(state, dialog.result, settings)
+            chain = build_chain(state, settings)
+
+        try:
+            save_state(state, state_file)
+            path = write_tracker(chain, tracker)
+        except OSError as exc:
+            messagebox.showerror(__app_name__, f"Could not write the tracker:\n{exc}")
+            return
+
+        self.tracker_path = path
+        self._log("")
+        self._log(f"Tracker: {chain.project or '(unnamed package)'}")
+        for idx, entry in enumerate(chain.issues, start=1):
+            steps = [None] + list(chain.steps)
+            s = steps[idx - 1] if idx - 1 < len(steps) else None
+            self._log(f"  {idx}. {entry.code:<8} {entry.label[:44]:<46} "
+                      f"{entry.total:>4}   {s.verdict if s else 'first issue'}")
+        outstanding = chain.outstanding
+        if outstanding:
+            self._log(f"{len(outstanding)} approved member(s) still on hold "
+                      f"(not removed).")
+        self._log(f"Tracker saved: {path}")
+        self._set_status(f"Tracker updated: {path.name}")
 
     # -- tab 2 actions ------------------------------------------------------
 
