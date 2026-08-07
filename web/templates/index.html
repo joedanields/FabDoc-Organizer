@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ app_name }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>{{ app_name }}</h1>
+  <span class="version">{{ version }} &middot; web</span>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-panel="generate">1. Generate &amp; Track</button>
+  <button class="tab" data-panel="trackers">2. Package Trackers</button>
+  <button class="tab" data-panel="validate">3. Validate Members</button>
+  <button class="tab" data-panel="diff">4. Compare Issues</button>
+</nav>
+
+<!-- ------------------------------------------------------------ generate -->
+<section class="panel active" id="panel-generate">
+
+  <fieldset>
+    <legend>Package folder</legend>
+    <p class="hint">Choose the issue folder. Its subfolders become worksheets, so
+       pick the folder itself, not the drawings inside it.</p>
+    <input type="file" id="folder" webkitdirectory directory multiple>
+    <button id="scan" class="primary">Scan folder</button>
+    <span id="scan-status" class="status"></span>
+  </fieldset>
+
+  <fieldset id="meta-box" hidden>
+    <legend>Project details &mdash; read from the folder name, edit if needed</legend>
+    <div class="grid">
+      <label>Title <input id="m-title" type="text"></label>
+      <label>Date <input id="m-date" type="text" disabled></label>
+      <label>Zone <input id="m-zone" type="text"></label>
+      <label>Package <input id="m-package" type="text"></label>
+    </div>
+    <label class="block">Project <em>&mdash; issues sharing this name chain into one tracker</em>
+      <input id="m-project" type="text"></label>
+  </fieldset>
+
+  <fieldset id="cat-box" hidden>
+    <legend>Drawing categories &mdash; one worksheet each</legend>
+    <table id="cats"><thead><tr>
+      <th></th><th>Worksheet</th><th>Source subfolder</th><th>PDFs</th><th>Detected as</th>
+    </tr></thead><tbody></tbody></table>
+  </fieldset>
+
+  <fieldset id="track-box" hidden>
+    <legend>Package tracker &mdash; chains every issue of this package</legend>
+    <label class="inline"><input type="checkbox" id="track" checked> Add this issue to the tracker</label>
+    <label class="inline">Stage
+      <select id="stage">
+        <option value="">&mdash; choose &mdash;</option>
+        {% for s in stages %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="inline">Round <input id="round" type="text" size="6"></label>
+    <p class="hint">IFA = issued for approval, IFF = issued for fabrication. The
+       stage is never guessed from the folder name: an approval issue mistaken
+       for a fabrication release would rewrite the approved baseline and report
+       the rest of the package as unshipped.</p>
+  </fieldset>
+
+  <div class="actions" id="run-box" hidden>
+    <button id="generate" class="primary">Generate register</button>
+    <span id="gen-status" class="status"></span>
+  </div>
+
+  <pre id="log" class="log" hidden></pre>
+</section>
+
+<!-- ------------------------------------------------------------ trackers -->
+<section class="panel" id="panel-trackers">
+  <fieldset>
+    <legend>Package trackers on this server</legend>
+    <button id="refresh-trackers">Refresh</button>
+    <ul id="tracker-list" class="list"></ul>
+  </fieldset>
+  <div id="tracker-detail"></div>
+</section>
+
+<!-- ------------------------------------------------------------ validate -->
+<section class="panel" id="panel-validate">
+  <fieldset>
+    <legend>Validate a register against the model member list</legend>
+    <label class="block">Register workbook (.xlsx)
+      <input type="file" id="v-register" accept=".xlsx,.xlsm"></label>
+    <label class="block">Model member list (.xlsx / .csv / .txt)
+      <input type="file" id="v-members" accept=".xlsx,.xlsm,.csv,.tsv,.txt"></label>
+    <label class="block">Member column <em>(optional &mdash; auto-detected)</em>
+      <input type="text" id="v-column" placeholder="Assembly Mark"></label>
+    <button id="validate" class="primary">Compare</button>
+    <span id="v-status" class="status"></span>
+  </fieldset>
+  <div id="v-result"></div>
+</section>
+
+<!-- ---------------------------------------------------------------- diff -->
+<section class="panel" id="panel-diff">
+  <fieldset>
+    <legend>Compare two issues of the same package</legend>
+    <p class="hint">Both sides are register workbooks generated on tab 1.</p>
+    <label class="block">Older issue <input type="file" id="d-old" accept=".xlsx,.xlsm"></label>
+    <label class="block">Newer issue <input type="file" id="d-new" accept=".xlsx,.xlsm"></label>
+    <button id="diff" class="primary">Compare</button>
+    <span id="d-status" class="status"></span>
+  </fieldset>
+  <div id="d-result"></div>
+</section>
+
+<!-- ------------------------------------------------------- hold modal -->
+<div class="backdrop" id="hold-backdrop" hidden>
+  <div class="modal">
+    <h2>Members on hold</h2>
+    <p id="hold-intro" class="hint"></p>
+    <div class="batch">
+      <input type="text" id="hold-all" placeholder="Reason for all outstanding members">
+      <button id="apply-all">Apply to all</button>
+    </div>
+    <div class="tablewrap">
+      <table id="hold-table"><thead><tr>
+        <th>Member</th><th>Zone</th><th>Rev</th><th>On hold since</th><th>Reason</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+    <div class="modal-actions">
+      <span id="hold-count" class="status"></span>
+      <button id="hold-cancel">Cancel</button>
+      <button id="hold-save" class="primary">Save reasons</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
