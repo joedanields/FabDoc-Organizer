@@ -261,12 +261,22 @@ def write_register(register: Register, output_path: str | Path,
 
 
 def suggest_register_name(register: Register) -> str:
-    """A filename for the register based on project metadata."""
-    meta = register.meta
-    bits = [b for b in (meta.title, meta.zone, meta.date_display) if b]
-    stem = " - ".join(bits) if bits else "Drawing Register"
-    safe = "".join(ch for ch in stem if ch not in '<>:"/\\|?*').strip()
-    return f"{safe[:120]} - Drawing Register.xlsx"
+    """A filename for the register, matching the package folder it came from.
+
+    The issue folder name is what the engineer recognises the package by, and a
+    register filed next to its issue is easier to find when the two names agree.
+    Metadata is only used when the folder has no usable name of its own.
+    """
+    stem = Path(register.project_folder).name.strip()
+    if not stem:
+        # A drive root ("D:\\") has no name; fall back to project metadata.
+        meta = register.meta
+        bits = [b for b in (meta.title, meta.zone, meta.date_display) if b]
+        stem = " - ".join(bits) if bits else "Drawing Register"
+    safe = "".join(ch for ch in stem if ch not in '<>:"/\\|?*')
+    # Windows rejects trailing dots and spaces, and folder names often end in one.
+    safe = safe[:120].strip(" .")
+    return f"{safe or 'Drawing Register'}.xlsx"
 
 
 # ---------------------------------------------------------------------------
