@@ -80,6 +80,12 @@ def read_register(path: str | Path) -> Register:
                 member = row[i_member].strip()
                 if not member:
                     continue
+                # Grouping by zone repeats the header above every zone band, so
+                # a register read back had a member literally called "Member
+                # Name" - reported as a drawing with no model member on every
+                # validation, and as added or removed on every comparison.
+                if member.lower() in _REQUIRED:
+                    continue
                 rec = DrawingRecord(category=sheet_name, member_name=member)
                 if 0 <= i_seq < len(row):
                     rec.seq_no = row[i_seq].strip()
