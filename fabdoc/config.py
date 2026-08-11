@@ -197,6 +197,11 @@ class AppSettings:
     # Default output folder for generated registers (empty = project folder)
     default_output_folder: str = ""
 
+    # Default folder for package trackers (empty = alongside the register).
+    # The tracker is the one file that outlives the issue, so teams keep it in a
+    # fixed place rather than in whichever issue folder happened to be processed.
+    default_tracker_folder: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "profile": self.profile.to_dict(),
@@ -209,6 +214,7 @@ class AppSettings:
             "include_source_column": self.include_source_column,
             "group_by_zone": self.group_by_zone,
             "default_output_folder": self.default_output_folder,
+            "default_tracker_folder": self.default_tracker_folder,
         }
 
     @classmethod
@@ -220,7 +226,7 @@ class AppSettings:
             "category_aliases", "category_order", "day_first_dates",
             "compare_case_insensitive", "compare_ignore_whitespace",
             "compare_strip_leading_zeros", "include_source_column",
-            "group_by_zone", "default_output_folder",
+            "group_by_zone", "default_output_folder", "default_tracker_folder",
         ):
             if key in data:
                 setattr(s, key, data[key])

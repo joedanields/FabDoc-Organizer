@@ -125,3 +125,68 @@ td.num, th.num { text-align: center; }
 .tablewrap tr.sel td { background: #fff7dd; }
 .modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
 .modal-actions .status { margin-right: auto; margin-left: 0; }
+
+/* --- path rows ----------------------------------------------------------- */
+
+/* Every destination on every tab is a text field plus a Browse button, so the
+   typed path stays visible and correctable - a picker alone hides where the
+   workbook actually went. */
+.pathrow { display: flex; gap: 8px; align-items: flex-end; margin: 8px 0; flex-wrap: wrap; }
+.pathrow > input[type=text] { flex: 1; min-width: 240px; }
+.pathrow label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.pathrow label.grow { flex: 1; }
+.pathrow label.grow input { width: 100%; }
+.pathrow.rect label { flex-direction: row; align-items: center; gap: 6px; }
+
+button.link {
+  border: 0; background: none; color: var(--blue);
+  padding: 0; font-size: 12.5px; text-decoration: underline;
+}
+button.link:hover { background: none; color: var(--navy); }
+
+.side { margin: 10px 0 16px; }
+.side strong { display: block; margin-bottom: 4px; color: var(--navy); }
+
+details.remote-alt { margin-top: 10px; }
+details.remote-alt summary { cursor: pointer; color: var(--blue); font-size: 12.5px; }
+
+progress { width: 260px; height: 16px; vertical-align: middle; margin-left: 12px; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#gen-status, #d-status, #v-status { display: block; margin: 0 0 12px; }
+span.good { color: #1e7b34; font-weight: 600; }
+span.bad { color: #b00020; font-weight: 600; }
+
+/* --- result sub-tabs ----------------------------------------------------- */
+
+.subtabs { display: flex; gap: 2px; margin-bottom: -1px; flex-wrap: wrap; }
+.subtab {
+  border: 1px solid var(--line); border-bottom: 0; background: #eef3f8;
+  border-radius: 4px 4px 0 0; font-size: 12.5px; padding: 6px 14px;
+}
+.subtab.active { background: #fff; color: var(--navy); font-weight: 600; }
+.subpanel { display: none; background: #fff; border: 1px solid var(--line); padding: 10px; }
+.subpanel.active { display: block; }
+.subpanel .tablewrap { max-height: 380px; }
+
+/* --- folder picker ------------------------------------------------------- */
+
+.drives { margin: 6px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+.list.picker {
+  max-height: 46vh; overflow: auto; border: 1px solid var(--line);
+  border-radius: 4px; margin-top: 4px;
+}
+.list.picker li { padding: 4px 10px; border-bottom: 1px solid #eee; }
+.list.picker a { text-decoration: none; display: block; }
+.list.picker a:hover { background: #eef3f8; }
+
+/* --- settings tab -------------------------------------------------------- */
+
+.split { display: flex; gap: 16px; align-items: flex-start; }
+.split .col { flex: 1; min-width: 0; }
+textarea {
+  width: 100%; font: 12px/1.5 Consolas, monospace; padding: 8px;
+  border: 1px solid var(--line); border-radius: 4px; resize: vertical;
+}
+#t-out { max-height: 420px; }
+
+@media (max-width: 900px) { .split { flex-direction: column; } }

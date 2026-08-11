@@ -2,6 +2,11 @@
 REM Double-click launcher for the web front end, matching the desktop one.
 cd /d "%~dp0"
 
+REM Bound to this machine, so the app may read project folders and write the
+REM register where the engineer asks. Set this to 0 to run it as a shared
+REM server instead: uploads in, downloads out, no access to the server's disk.
+set FABDOC_LOCAL=1
+
 python -c "import fastapi, uvicorn, multipart, jinja2" 2>nul
 if errorlevel 1 (
     echo Installing the web dependencies, one moment...

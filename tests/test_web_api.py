@@ -1,0 +1,563 @@
+"""The web API, exercised the way the page drives it.
+
+These cover what the browser front end adds over a plain function call: reading a
+package in place instead of uploading it, writing the workbook to a folder the
+engineer chose, progress and cancellation on a long run, and the settings tab
+saving the same profile file the desktop app reads.
+
+Everything runs against a locally-connected client, because that is what the
+packaged executable is. The one test that does not is the point of the
+distinction: a non-loopback client must not be able to browse the server's disk.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "web"))
+
+from fastapi.testclient import TestClient          # noqa: E402
+
+from app import local_disk as disk                 # noqa: E402
+from app import workspace as ws                    # noqa: E402
+from app.main import app                           # noqa: E402
+
+
+class _Client:
+    """Rewrites the ASGI scope so the test client presents as a real address.
+
+    Starlette's test client reports its host as "testclient", which is neither
+    loopback nor remote. Local-disk access hangs off that host, so the tests
+    have to say which one they are pretending to be.
+    """
+
+    def __init__(self, inner, host: str):
+        self.inner, self.host = inner, host
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            scope = dict(scope, client=(self.host, 51000))
+        await self.inner(scope, receive, send)
+
+
+@pytest.fixture
+def local() -> TestClient:
+    return TestClient(_Client(app, "127.0.0.1"))
+
+
+@pytest.fixture
+def remote() -> TestClient:
+    return TestClient(_Client(app, "10.0.0.9"))
+
+
+@pytest.fixture(autouse=True)
+def sandbox(tmp_path: Path, monkeypatch) -> Path:
+    """Keep every test's uploads, trackers and settings out of the real ones."""
+    root = tmp_path / "data"
+    for name, attr in (("uploads", "UPLOAD_ROOT"), ("trackers", "TRACKER_ROOT"),
+                       ("output", "OUTPUT_ROOT")):
+        monkeypatch.setattr(ws, attr, root / name)
+    ws.ensure_roots()
+    monkeypatch.setattr("app.main.ws", ws)
+
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr("fabdoc.config.default_settings_path", lambda: settings_file)
+    return root
+
+
+def _finish(client: TestClient, job: str, limit: float = 120.0) -> dict:
+    """Poll a job to completion the way the page does."""
+    deadline = time.time() + limit
+    while time.time() < deadline:
+        state = client.get(f"/api/job/{job}").json()
+        if state["state"] != "running":
+            return state
+        time.sleep(0.05)
+    raise AssertionError("job never finished")
+
+
+# --------------------------------------------------------------- local scope
+
+
+def test_a_remote_client_cannot_browse_the_server_disk(remote: TestClient):
+    """Path browsing is a feature of the local executable, not of a shared server.
+
+    Left ungated, anyone who could reach the port could enumerate the machine's
+    filesystem and name any folder as an output destination.
+    """
+    assert remote.get("/api/browse", params={"path": "C:\\"}).status_code == 403
+    assert remote.post("/api/scan/local", json={"folder": "C:\\"}).status_code == 403
+    assert remote.post("/api/open", json={"path": "C:\\Windows\\notepad.exe"}
+                       ).status_code == 403
+
+
+def test_a_remote_client_still_gets_the_sandbox(remote: TestClient, project_folder: Path,
+                                                sandbox: Path):
+    """A shared deployment keeps working: uploads in, downloads out."""
+    files, paths = [], []
+    for pdf in sorted(project_folder.rglob("*.pdf")):
+        files.append(("files", (pdf.name, pdf.read_bytes(), "application/pdf")))
+        paths.append(str(pdf.relative_to(project_folder.parent)).replace("\\", "/"))
+    scanned = remote.post("/api/scan", files=files, data={"paths": paths})
+    assert scanned.status_code == 200, scanned.text
+    body = scanned.json()
+    assert body["pdfs"] == 7
+    # No local paths are offered to a client that cannot use them.
+    assert body["output"]["folder"] == ""
+
+    started = remote.post("/api/generate", data={
+        "session": body["session"],
+        "categories": [c["name"] for c in body["categories"]],
+        "output_name": "Register.xlsx", "track": "false",
+    })
+    assert started.status_code == 200, started.text
+    result = _finish(remote, started.json()["job"])
+    assert result["state"] == "done", result.get("error")
+    assert result["result"]["sandboxed"] is True
+    assert (ws.OUTPUT_ROOT / "Register.xlsx").is_file()
+
+
+def test_a_remote_client_cannot_write_outside_the_sandbox(remote: TestClient,
+                                                          project_folder: Path,
+                                                          tmp_path: Path):
+    """An output folder named by a remote client is ignored, not honoured."""
+    escape = tmp_path / "escape"
+    started = remote.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(escape), "output_name": "Register.xlsx", "track": "false",
+    })
+    # No session and no usable local path: the upload is what it falls back to.
+    assert started.status_code == 400
+    assert not escape.exists()
+
+
+# ------------------------------------------------------- reading in place
+
+
+def test_scanning_a_local_folder_reads_it_where_it_sits(local: TestClient,
+                                                        project_folder: Path):
+    body = local.post("/api/scan/local", json={"folder": str(project_folder)}).json()
+    assert body["pdfs"] == 7
+    assert body["session"] is None or body["session"] == ""
+    assert Path(body["local_path"]) == project_folder.resolve()
+    assert {c["name"] for c in body["categories"]} == {"Structural", "Erection", "Part"}
+    assert body["meta"]["zone"] == "B"
+    assert body["output"]["name"].endswith(".xlsx")
+    # Nothing was copied into the workspace.
+    assert not any(ws.UPLOAD_ROOT.iterdir())
+
+
+def test_scanning_a_folder_with_no_drawings_says_so(local: TestClient, tmp_path: Path):
+    empty = tmp_path / "Nothing Here"
+    empty.mkdir()
+    r = local.post("/api/scan/local", json={"folder": str(empty)})
+    assert r.status_code == 400
+    assert "No drawing PDFs" in r.json()["detail"]
+
+
+# ------------------------------------------------------- chosen destinations
+
+
+def test_the_register_lands_in_the_folder_the_engineer_chose(local: TestClient,
+                                                             project_folder: Path,
+                                                             tmp_path: Path):
+    """The whole point of the path fields: no download, no fishing in Downloads."""
+    chosen = tmp_path / "Job Folder" / "Registers"
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder),
+        "categories": ["Structural", "Erection", "Part"],
+        "output_folder": str(chosen), "output_name": "Drawing Register",
+        "track": "false",
+    })
+    result = _finish(local, started.json()["job"])
+    assert result["state"] == "done", result.get("error")
+    payload = result["result"]
+
+    written = chosen / "Drawing Register.xlsx"     # the extension is supplied
+    assert written.is_file()
+    assert Path(payload["register_path"]) == written
+    assert payload["sandboxed"] is False
+    assert payload["total"] == 7
+
+
+def test_the_tracker_lands_where_asked_and_is_appended_to(local: TestClient,
+                                                          project_folder: Path,
+                                                          single_category_folder: Path,
+                                                          tmp_path: Path):
+    """A tracker outlives the issue, so it has its own remembered folder.
+
+    The second issue must find the first one's tracker and chain onto it rather
+    than starting a new one - that is what the whole tracking feature is for.
+    Both issues name the same project, which is what keys the chain.
+    """
+    chosen = tmp_path / "Trackers"
+    for round_no, folder in (("1", project_folder), ("2", single_category_folder)):
+        started = local.post("/api/generate", data={
+            "local_path": str(folder), "categories": ["Structural", "Erection"],
+            "output_folder": str(tmp_path / "out"), "output_name": f"R{round_no}.xlsx",
+            "track": "true", "stage": "IFA", "round_no": round_no,
+            "project": "Skyline Tower",
+            "tracker_folder": str(chosen), "tracker_name": "Skyline - Tracker.xlsx",
+        })
+        result = _finish(local, started.json()["job"])
+        assert result["state"] == "done", result.get("error")
+
+    tracker = chosen / "Skyline - Tracker.xlsx"
+    assert tracker.is_file()
+    chain = result["result"]["chain"]
+    assert len(chain["issues"]) == 2, "the second issue started a new tracker"
+    assert Path(chain["tracker_path"]) == tracker
+
+
+def test_the_tracker_is_downloadable_from_wherever_it_went(local: TestClient,
+                                                           project_folder: Path,
+                                                           tmp_path: Path):
+    """The tracker can live somewhere the register does not.
+
+    Its download link was derived from the register's location, so a tracker in
+    a folder of its own pointed at the sandbox route and 404'd.
+    """
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(tmp_path / "registers"), "output_name": "R.xlsx",
+        "track": "true", "stage": "IFA", "round_no": "1", "project": "Skyline",
+        "tracker_folder": str(tmp_path / "trackers"),
+        "tracker_name": "Skyline - Tracker.xlsx",
+    })
+    payload = _finish(local, started.json()["job"])["result"]
+    chain = payload["chain"]
+
+    assert chain["tracker_sandboxed"] is False
+    assert payload["sandboxed"] is False
+    assert local.get("/download/file",
+                     params={"path": chain["tracker_path"]}).status_code == 200
+
+
+def test_a_sandboxed_tracker_is_flagged_as_such(local: TestClient, project_folder: Path,
+                                                tmp_path: Path):
+    """No tracker folder given: it goes to the server's own folder and is listed."""
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(tmp_path / "registers"), "output_name": "R.xlsx",
+        "track": "true", "stage": "IFA", "round_no": "1", "project": "Skyline",
+    })
+    chain = _finish(local, started.json()["job"])["result"]["chain"]
+    assert chain["tracker_sandboxed"] is True
+    assert local.get("/download/tracker/" + chain["tracker"]).status_code == 200
+    assert [t["file"] for t in local.get("/api/trackers").json()["trackers"]] \
+        == [chain["tracker"]]
+
+
+def test_re_running_the_same_issue_folder_replaces_its_entry(local: TestClient,
+                                                             project_folder: Path,
+                                                             tmp_path: Path):
+    """A corrected re-run must not appear as a second issue of the package."""
+    chosen = tmp_path / "Trackers"
+    for _ in range(2):
+        started = local.post("/api/generate", data={
+            "local_path": str(project_folder), "categories": ["Structural"],
+            "output_folder": str(tmp_path / "out"), "output_name": "R.xlsx",
+            "track": "true", "stage": "IFA", "round_no": "1",
+            "project": "Skyline Tower",
+            "tracker_folder": str(chosen), "tracker_name": "Skyline - Tracker.xlsx",
+        })
+        result = _finish(local, started.json()["job"])
+        assert result["state"] == "done", result.get("error")
+    assert len(result["result"]["chain"]["issues"]) == 1
+
+
+def test_a_bad_output_folder_is_refused_before_the_run(local: TestClient,
+                                                       project_folder: Path,
+                                                       tmp_path: Path):
+    """A typo must not surface after five minutes of reading PDFs."""
+    a_file = tmp_path / "not-a-folder.txt"
+    a_file.write_text("x", encoding="utf-8")
+    r = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(a_file), "track": "false",
+    })
+    assert r.status_code == 400
+    assert "not a folder" in r.json()["detail"].lower()
+
+    r = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": "Registers", "track": "false",     # relative
+    })
+    assert r.status_code == 400
+    assert "full path" in r.json()["detail"]
+
+
+def test_remembering_the_output_folder_survives_to_the_next_scan(local: TestClient,
+                                                                 project_folder: Path,
+                                                                 tmp_path: Path):
+    """Ticking the box is what stops the path being retyped every issue."""
+    chosen = tmp_path / "Remembered"
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(chosen), "output_name": "R.xlsx",
+        "save_default_output": "true", "track": "false",
+    })
+    assert _finish(local, started.json()["job"])["state"] == "done"
+
+    again = local.post("/api/scan/local", json={"folder": str(project_folder)}).json()
+    assert Path(again["output"]["folder"]) == chosen
+
+
+# ------------------------------------------------------- progress and cancel
+
+
+def test_a_run_reports_progress_and_can_be_cancelled(local: TestClient,
+                                                     project_folder: Path,
+                                                     tmp_path: Path):
+    """The desktop app's progress bar and Cancel button, over HTTP."""
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder),
+        "categories": ["Structural", "Erection", "Part"],
+        "output_folder": str(tmp_path / "out"), "output_name": "R.xlsx",
+        "track": "false",
+    })
+    job = started.json()["job"]
+    assert local.get(f"/api/job/{job}").json()["state"] in {"running", "done"}
+
+    local.post(f"/api/job/{job}/cancel")
+    state = _finish(local, job)
+
+    # Whichever way the race falls, the state must match what is on disk. A run
+    # reported as cancelled that quietly wrote a register - over the previous
+    # one - is the failure worth guarding against.
+    written = (tmp_path / "out" / "R.xlsx").exists()
+    if state["state"] == "cancelled":
+        assert not written, "a cancelled run still wrote a workbook"
+    else:
+        assert state["state"] == "done" and written
+
+
+def test_an_unknown_job_is_not_a_500(local: TestClient):
+    assert local.get("/api/job/deadbeef").status_code == 404
+
+
+# --------------------------------------------------------------- validation
+
+
+def _register(local: TestClient, project_folder: Path, out: Path) -> dict:
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder),
+        "categories": ["Structural", "Erection", "Part"],
+        "output_folder": str(out), "output_name": "Register.xlsx", "track": "false",
+    })
+    state = _finish(local, started.json()["job"])
+    assert state["state"] == "done", state.get("error")
+    return state["result"]
+
+
+def test_validation_reports_every_row_not_just_a_count(local: TestClient,
+                                                       project_folder: Path,
+                                                       tmp_path: Path):
+    """Which member is missing is the only question this screen answers."""
+    reg = _register(local, project_folder, tmp_path / "out")
+    members = tmp_path / "model.csv"
+    members.write_text("Assembly Mark\nC-101\nC-102\nGHOST-1\n", encoding="utf-8")
+
+    body = local.post("/api/validate", data={
+        "register_path": reg["register_path"], "members_path": str(members),
+        "column": "Assembly Mark", "category": "(all)",
+        "output_folder": str(tmp_path / "out"), "output_name": "Validation.xlsx",
+    }).json()
+
+    assert body["counts"]["matched"] == 2
+    assert [r["member"] for r in body["missing_rows"]] == ["GHOST-1"]
+    extra = {r["member"] for r in body["extra_rows"]}
+    assert "C-110" in extra and "E-201" in extra
+    # The detail columns the desktop tree shows, present per row. Source File is
+    # blank unless the register was written with that column switched on.
+    row = body["extra_rows"][0]
+    assert set(row) == {"member", "category", "seq", "rev", "file"}
+    assert row["category"] in {"Structural", "Erection", "Part"}
+    assert row["seq"] and row["rev"]
+    assert Path(body["report_path"]).is_file()
+
+
+def test_validating_one_category_leaves_the_others_alone(local: TestClient,
+                                                         project_folder: Path,
+                                                         tmp_path: Path):
+    """Part drawings and erection drawings validate against different exports."""
+    reg = _register(local, project_folder, tmp_path / "out")
+    members = tmp_path / "model.csv"
+    members.write_text("Assembly Mark\nP-301\nP-302\n", encoding="utf-8")
+
+    body = local.post("/api/validate", data={
+        "register_path": reg["register_path"], "members_path": str(members),
+        "column": "Assembly Mark", "category": "Part",
+        "output_folder": str(tmp_path / "out"),
+    }).json()
+    assert body["clean"] is True, body["verdict"]
+    assert body["counts"]["extra"] == 0
+
+
+def test_comparison_options_reach_the_engine(local: TestClient, project_folder: Path,
+                                             tmp_path: Path):
+    """Ignore case / spaces / leading zeros were on the desktop and nowhere here."""
+    reg = _register(local, project_folder, tmp_path / "out")
+    members = tmp_path / "model.csv"
+    members.write_text("Assembly Mark\nc-101\nc-102\nc-110\n", encoding="utf-8")
+
+    strict = local.post("/api/validate", data={
+        "register_path": reg["register_path"], "members_path": str(members),
+        "column": "Assembly Mark", "category": "Structural",
+        "case_insensitive": "false", "output_folder": str(tmp_path / "out"),
+    }).json()
+    assert strict["counts"]["matched"] == 0
+
+    relaxed = local.post("/api/validate", data={
+        "register_path": reg["register_path"], "members_path": str(members),
+        "column": "Assembly Mark", "category": "Structural",
+        "case_insensitive": "true", "output_folder": str(tmp_path / "out"),
+    }).json()
+    assert relaxed["counts"]["matched"] == 3
+
+
+def test_the_register_from_tab_one_can_be_reused(local: TestClient, project_folder: Path,
+                                                 tmp_path: Path):
+    """"Use the register I just generated" - no re-upload, no re-read."""
+    _register(local, project_folder, tmp_path / "out")
+    last = local.get("/api/last-register").json()
+    assert last["available"] is True
+    assert last["total"] == 7
+
+    members = tmp_path / "model.csv"
+    members.write_text("Assembly Mark\nC-101\n", encoding="utf-8")
+    body = local.post("/api/validate", data={
+        "use_last": "true", "members_path": str(members),
+        "column": "Assembly Mark", "output_folder": str(tmp_path / "out"),
+    }).json()
+    assert body["counts"]["matched"] == 1
+
+
+def test_the_member_list_preview_lists_columns(local: TestClient, tmp_path: Path):
+    """Typing a column name blind is how you validate against Quantity."""
+    members = tmp_path / "model.csv"
+    members.write_text("Assembly Mark,Quantity\nC-101,2\nC-102,1\n", encoding="utf-8")
+    body = local.post("/api/members/preview", data={"path": str(members)}).json()
+    assert "Assembly Mark" in body["columns"]
+    assert body["count"] == 2
+
+
+# --------------------------------------------------------------- comparison
+
+
+def test_two_package_folders_can_be_compared_directly(local: TestClient,
+                                                      project_folder: Path,
+                                                      single_category_folder: Path,
+                                                      tmp_path: Path):
+    """The desktop app takes a folder on either side; the web took workbooks only."""
+    started = local.post("/api/diff", data={
+        "old_path": str(project_folder), "new_path": str(single_category_folder),
+        "output_folder": str(tmp_path / "out"), "output_name": "Diff.xlsx",
+    })
+    state = _finish(local, started.json()["job"])
+    assert state["state"] == "done", state.get("error")
+    body = state["result"]
+
+    assert body["old_total"] == 7 and body["new_total"] == 2
+    assert body["counts"]["removed"] == 7 and body["counts"]["added"] == 2
+    row = body["added_rows"][0]
+    assert set(row) == {"member", "zone", "old", "new", "qty"}
+    assert Path(body["report_path"]).is_file()
+
+
+# ----------------------------------------------------------------- settings
+
+
+def test_settings_round_trip_to_the_file_the_desktop_app_reads(local: TestClient,
+                                                               tmp_path: Path):
+    from fabdoc.config import default_settings_path, load_settings
+
+    current = local.get("/api/settings").json()
+    profile = dict(current["profile"])
+    profile["member_patterns"] = [r"MARK\s*:\s*([A-Z0-9\-]+)"]
+    profile["title_block_rect"] = [0.4, 0.5, 1.0, 1.0]
+
+    saved = local.post("/api/settings", json={
+        "profile": profile, "group_by_zone": False,
+        "default_output_folder": str(tmp_path / "Registers"),
+    })
+    assert saved.status_code == 200, saved.text
+    assert default_settings_path().is_file()
+
+    reloaded = load_settings()
+    assert reloaded.profile.member_patterns == [r"MARK\s*:\s*([A-Z0-9\-]+)"]
+    assert reloaded.profile.title_block_rect == (0.4, 0.5, 1.0, 1.0)
+    assert reloaded.group_by_zone is False
+    assert reloaded.default_output_folder == str(tmp_path / "Registers")
+
+
+@pytest.mark.parametrize("rect,why", [
+    ([0.9, 0.1, 0.2, 0.9], "left past right"),
+    ([0.1, 0.9, 0.9, 0.2], "top past bottom"),
+    ([0.1, 0.1, 1.4, 0.9], "outside the page"),
+])
+def test_an_impossible_title_block_region_is_refused(local: TestClient, rect, why):
+    """An inverted rect matches nothing, silently, for a thousand drawings."""
+    profile = local.get("/api/settings").json()["profile"]
+    profile["title_block_rect"] = rect
+    r = local.post("/api/settings", json={"profile": profile})
+    assert r.status_code == 400, why
+
+
+def test_restoring_defaults_does_not_save_them(local: TestClient):
+    """The desktop app restores into the form and waits for Save."""
+    before = local.get("/api/settings").json()["profile"]["member_patterns"]
+    local.post("/api/settings", json={
+        "profile": dict(local.get("/api/settings").json()["profile"],
+                        member_patterns=["ZZZ"])})
+    assert local.get("/api/settings").json()["profile"]["member_patterns"] == ["ZZZ"]
+
+    defaults = local.get("/api/settings/defaults").json()
+    assert defaults["profile"]["member_patterns"] == before
+    # Fetching defaults changed nothing on disk.
+    assert local.get("/api/settings").json()["profile"]["member_patterns"] == ["ZZZ"]
+
+
+def test_a_drawing_can_be_tested_against_the_patterns_on_the_page(local: TestClient,
+                                                                  project_folder: Path):
+    """The Test button: what the parser sees, then what it extracted."""
+    pdf = next(project_folder.rglob("*.pdf"))
+    profile = local.get("/api/settings").json()["profile"]
+    body = local.post("/api/settings/test", data={
+        "path": str(pdf), "profile": json.dumps(profile),
+    }).json()
+
+    assert body["ok"] is True
+    assert "Largest text spans" in body["text"]
+    assert "Member Name:" in body["text"]
+
+    # A profile that cannot match anything gives an honest empty answer, not a crash.
+    profile["member_patterns"] = [r"NOTHING_MATCHES_THIS\s*:\s*(\w+)"]
+    profile["use_largest_text_fallback"] = False
+    body = local.post("/api/settings/test", data={
+        "path": str(pdf), "profile": json.dumps(profile),
+    }).json()
+    assert "Member Name:" in body["text"]
+
+
+# ----------------------------------------------------------------- download
+
+
+def test_only_files_this_app_wrote_can_be_opened_or_downloaded(local: TestClient,
+                                                               project_folder: Path,
+                                                               tmp_path: Path):
+    """A real path in a request must not turn the app into a file server."""
+    reg = _register(local, project_folder, tmp_path / "out")
+    assert local.get("/download/file",
+                     params={"path": reg["register_path"]}).status_code == 200
+
+    secret = tmp_path / "payroll.xlsx"
+    secret.write_bytes(b"PK\x03\x04not really")
+    assert local.get("/download/file", params={"path": str(secret)}).status_code == 404
+    assert local.post("/api/open", json={"path": str(secret)}).status_code == 400
+    assert not disk.is_remembered(secret)

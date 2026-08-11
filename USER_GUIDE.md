@@ -57,7 +57,8 @@ python -m fabdoc
 ```
 
 Four tabs: Generate Register, Validate Members, Compare Issues, Extraction
-Settings. This is the only one with the settings/calibration tab.
+Settings. The web app has the same four; both write the calibrated profile to
+`~/.fabdoc/settings.json`, so tuning it in either one applies everywhere.
 
 ### Web app
 
@@ -68,8 +69,17 @@ cd web
 python -m uvicorn app.main:app --port 8000
 ```
 
-Then open <http://127.0.0.1:8000>. Same four tabs minus settings. Use this when
-several people need it from their own machines.
+Then open <http://127.0.0.1:8000>. The same four tabs, plus a fifth listing every
+package tracker on the server.
+
+Run on your own machine it behaves like the desktop app: point tab 1 at a folder
+path and it is read where it sits — no upload — and every destination has a
+**Browse…** button that writes the workbook to a real folder, with a
+**Remember this as the default** tick so the path is not retyped every issue.
+
+Run as a shared server (`FABDOC_LOCAL=0`, or reached from another machine) it
+falls back to uploading the folder and handing the register back as a download,
+and refuses any access to the server's own disk. See `web\README.md`.
 
 ### Command line
 
@@ -405,12 +415,13 @@ that window open; closing it stops the server.
 otherwise (`-o`, or the Save-as box). The tracker defaults to `Package
 Tracker.xlsx` in the same output folder, overridable with `--tracker`.
 
-**Web app** — everything lands under `web\data\`:
+**Web app** — whatever folder you chose on the tab. Anything written without one
+lands under `web\data\` (move it with `FABDOC_DATA`):
 
 ```
 web/data/
   uploads/    one workspace per upload, deleted once its register is written
-  output/     generated registers and reports
+  output/     registers and reports written without a folder
   trackers/   one tracker + chain state per project
 ```
 

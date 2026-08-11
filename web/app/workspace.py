@@ -12,14 +12,33 @@ that issue 10 created on Monday.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import sys
 import uuid
 from pathlib import Path
 
+
+def _data_root() -> Path:
+    """Where the server keeps its own files.
+
+    Frozen into an executable, ``__file__`` points inside a temporary unpack
+    directory that is deleted on exit - trackers written there would vanish
+    between runs, which for a package chain means losing every issue but the
+    last. So a frozen build keeps its data beside the executable instead.
+    """
+    override = os.environ.get("FABDOC_DATA")
+    if override:
+        return Path(override)
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "data"
+    return Path(__file__).resolve().parents[1] / "data"
+
+
 # Everything the server writes lives under here, so a deployment has exactly one
 # directory to point at a real disk and one directory to clean up.
-DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
+DATA_ROOT = _data_root()
 UPLOAD_ROOT = DATA_ROOT / "uploads"
 TRACKER_ROOT = DATA_ROOT / "trackers"
 OUTPUT_ROOT = DATA_ROOT / "output"
