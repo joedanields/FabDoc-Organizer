@@ -507,7 +507,12 @@ def test_marks_that_do_not_encode_a_sequence_are_not_forced():
     assert parse_member_mark("") == ("", "", "")
 
 
-def test_serial_number_restarts_within_each_zone(tmp_path: Path):
+def test_serial_number_restarts_within_each_sequence(tmp_path: Path):
+    """S.No counts within its own band, not across the zone.
+
+    Each band is a separate slice of work, so "the third drawing of sequence
+    172" is the number worth printing. The band headings carry the counts.
+    """
     root = tmp_path / "Stairs at Zone 1 and Zone 2 - 2026-07-06"
     for mark in ["17172C1", "17172C2", "17173R1", "17270S1", "17271X1"]:
         make_drawing(root / "Assembly" / f"{mark}  - Rev B.pdf", mark, revision="B")
@@ -515,7 +520,8 @@ def test_serial_number_restarts_within_each_zone(tmp_path: Path):
     cat = reg.categories[0]
     groups = cat.zone_groups()
     assert [z for z, _ in groups] == ["1", "2"]
-    assert [r.seq_no for _, recs in groups for r in recs] == ["1", "2", "3", "1", "2"]
+    #                        seq 172   seq 173  seq 270  seq 271
+    assert [r.seq_no for _, recs in groups for r in recs] == ["1", "2", "1", "1", "1"]
     assert cat.sequences_for("1") == ["172", "173"]
     assert reg.meta.zones == ["1", "2"]
 

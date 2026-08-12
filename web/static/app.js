@@ -886,6 +886,21 @@ function applySettings(s) {
   $("s-zone").checked = !!s.group_by_zone;
   $("s-outdir").value = s.default_output_folder || "";
   $("s-trackdir").value = s.default_tracker_folder || "";
+  $("p-seqgroups").value = (s.sequence_groups || [])
+    .map(([digit, name]) => `${digit} = ${name}`).join("\n");
+}
+
+/* "7 = Misc. / Stair Steel" per line. Line order is erection order, so the
+   list is kept as typed rather than sorted. */
+function collectSequenceGroups() {
+  return $("p-seqgroups").value.split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf("=");
+      if (at < 0) throw new Error(`"${line}" needs the form: digit = name`);
+      return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
+    });
 }
 
 function collectProfile() {
@@ -917,12 +932,20 @@ $("save-settings").onclick = async () => {
     status($("s-status"), "The title block region must be four numbers.", "bad");
     return;
   }
+  let sequenceGroups;
+  try {
+    sequenceGroups = collectSequenceGroups();
+  } catch (err) {
+    status($("s-status"), err.message, "bad");
+    return;
+  }
   try {
     const d = await send("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         profile: collectProfile(),
+        sequence_groups: sequenceGroups,
         day_first_dates: $("s-daryfirst").checked,
         include_source_column: $("s-source").checked,
         group_by_zone: $("s-zone").checked,

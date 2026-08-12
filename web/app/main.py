@@ -218,6 +218,36 @@ def _profile_from(data: dict) -> ExtractionProfile:
     return profile
 
 
+def _sequence_groups_from(raw: object) -> list[list]:
+    """Validate the steel-type priority table coming back from the page.
+
+    Order is the erection order, so a duplicated decade is a real mistake: two
+    rows claiming the 70s would silently make the second unreachable and put a
+    whole sequence under the wrong heading.
+    """
+    if not isinstance(raw, list):
+        raise ValueError("The steel type table must be a list of rows.")
+    table: list[list] = []
+    seen: set[int] = set()
+    for entry in raw:
+        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+            raise ValueError("Each steel type needs a sequence digit and a name.")
+        try:
+            decade = int(entry[0])
+        except (TypeError, ValueError):
+            raise ValueError(f"'{entry[0]}' is not a sequence digit (0-9).")
+        if not 0 <= decade <= 9:
+            raise ValueError(f"Sequence digit {decade} must be between 0 and 9.")
+        if decade in seen:
+            raise ValueError(f"Sequence digit {decade} is listed twice.")
+        seen.add(decade)
+        name = str(entry[1]).strip()
+        if not name:
+            raise ValueError(f"Sequence digit {decade} has no name.")
+        table.append([decade, name])
+    return table
+
+
 @app.post("/api/settings")
 async def api_save_settings(request: Request):
     """Persist the whole profile to ~/.fabdoc/settings.json - the file the
@@ -238,6 +268,11 @@ async def api_save_settings(request: Request):
     for key in ("default_output_folder", "default_tracker_folder"):
         if key in body:
             setattr(settings, key, str(body[key] or "").strip())
+    if "sequence_groups" in body:
+        try:
+            settings.sequence_groups = _sequence_groups_from(body["sequence_groups"])
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc))
     if isinstance(body.get("category_aliases"), dict):
         settings.category_aliases = {
             str(k): [str(x) for x in v] for k, v in body["category_aliases"].items()
@@ -563,7 +598,9 @@ async def api_generate(
             raise ValueError("No drawings found in the selected categories.")
 
         job.progress(job.total, job.total, "Writing the workbook...")
-        write_register(register, out_path, include_source=settings.include_source_column)
+        write_register(register, out_path,
+                       include_source=settings.include_source_column,
+                       sequence_groups=settings.sequence_groups)
         disk.remember(out_path)
         _LAST["register"] = register
         _LAST["path"] = str(out_path)

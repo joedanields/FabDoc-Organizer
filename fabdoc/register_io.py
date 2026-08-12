@@ -86,6 +86,11 @@ def read_register(path: str | Path) -> Register:
                 # validation, and as added or removed on every comparison.
                 if member.lower() in _REQUIRED:
                     continue
+                # The totals row is written as a merged band, so its count does
+                # not land in this column - unless somebody unmerged it in
+                # Excel, which is a thing people do to sort a sheet.
+                if 0 <= i_seq < len(row) and row[i_seq].strip().lower() == "total":
+                    continue
                 rec = DrawingRecord(category=sheet_name, member_name=member)
                 if 0 <= i_seq < len(row):
                     rec.seq_no = row[i_seq].strip()

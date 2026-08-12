@@ -76,7 +76,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         return 1
 
     out = Path(args.output) if args.output else folder / suggest_register_name(register)
-    write_register(register, out, include_source=settings.include_source_column)
+    write_register(register, out, include_source=settings.include_source_column,
+                   sequence_groups=settings.sequence_groups)
 
     print()
     for cat in register.categories:

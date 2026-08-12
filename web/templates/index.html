@@ -257,6 +257,16 @@
       <fieldset><legend>Filename fallback patterns (groups: seq, member, rev)</legend>
         <textarea id="p-filename" rows="5" spellcheck="false"></textarea></fieldset>
 
+      <fieldset><legend>Steel types, in erection order</legend>
+        <p class="hint">One per line as <code>digit = name</code>, where the digit is
+           the tens of the sequence code &mdash; sequence 172 is zone 1, code 72,
+           so it is a <code>7</code>. The order of the lines is the order the
+           bands appear in the register, which is <em>not</em> the numeric order:
+           mezzanine steel is erected after roof steel. A code whose digit is not
+           listed sorts after everything here and is left unnamed.</p>
+        <textarea id="p-seqgroups" rows="6" spellcheck="false"></textarea>
+      </fieldset>
+
       <fieldset><legend>Title block region (page fractions, 0&ndash;1)</legend>
         <div class="pathrow rect">
           <label>left <input type="text" id="r-left" size="5"></label>

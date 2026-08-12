@@ -496,6 +496,30 @@ def test_settings_round_trip_to_the_file_the_desktop_app_reads(local: TestClient
     assert reloaded.default_output_folder == str(tmp_path / "Registers")
 
 
+def test_the_steel_type_table_round_trips(local: TestClient):
+    """The erection order is a project convention, so it is editable."""
+    from fabdoc.config import load_settings
+
+    saved = local.post("/api/settings", json={
+        "sequence_groups": [[7, "Stairs First"], [1, "Perimeter Last"]],
+    })
+    assert saved.status_code == 200, saved.text
+    assert load_settings().sequence_groups == [[7, "Stairs First"], [1, "Perimeter Last"]]
+
+
+@pytest.mark.parametrize("table,why", [
+    ([[7, "Misc"], [7, "Stairs"]], "the same decade listed twice"),
+    ([[7, ""]], "a group with no name"),
+    ([["seven", "Misc"]], "a decade that is not a number"),
+    ([[70, "Misc"]], "a decade outside 0-9"),
+    ([[7]], "a row missing its name"),
+])
+def test_a_broken_steel_type_table_is_refused(local: TestClient, table, why):
+    """Two rows claiming the 70s would put a whole sequence under the wrong heading."""
+    r = local.post("/api/settings", json={"sequence_groups": table})
+    assert r.status_code == 400, why
+
+
 @pytest.mark.parametrize("rect,why", [
     ([0.9, 0.1, 0.2, 0.9], "left past right"),
     ([0.1, 0.9, 0.9, 0.2], "top past bottom"),

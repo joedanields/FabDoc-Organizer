@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
+from . import sequencing
 from .categories import DrawingCategory, discover_categories, natural_key
 from .config import AppSettings
 from .extract import DrawingRecord, extract_drawing
@@ -62,13 +63,37 @@ class CategoryRegister:
         ordered = sorted(grouped, key=lambda z: (not z.isdigit(), int(z) if z.isdigit() else 0, z))
         return [(z, grouped[z]) for z in ordered]
 
-    def sequences_for(self, zone: str) -> list[str]:
-        """Sequence numbers contributing to a zone, e.g. zone 1 -> 172, 173."""
+    def sequences_for(self, zone: str, groups: list[list] | None = None) -> list[str]:
+        """Sequence numbers contributing to a zone, e.g. zone 1 -> 172, 173.
+
+        Ordered by steel type rather than numerically - the erection order is
+        what the register is read in, and it is not the same as ascending.
+        """
         out: list[str] = []
         for rec in self.records:
             if rec.zone == zone and rec.seq_group and rec.seq_group not in out:
                 out.append(rec.seq_group)
-        return sorted(out)
+        return sorted(out, key=lambda s: sequencing.sort_key(s, groups))
+
+    def sequence_groups(self, zone: str, groups: list[list] | None = None
+                        ) -> list[tuple[str, list[DrawingRecord]]]:
+        """One zone's records clustered by sequence, in erection order.
+
+        Returns a single ("", records) group when nothing in the zone carries a
+        sequence, so the writer needs no special case for a package that does
+        not encode one.
+        """
+        clustered: dict[str, list[DrawingRecord]] = {}
+        for rec in self.records:
+            if rec.zone != zone:
+                continue
+            clustered.setdefault(rec.seq_group or "", []).append(rec)
+        if not clustered:
+            return []
+        if list(clustered) == [""]:
+            return [("", clustered[""])]
+        ordered = sorted(clustered, key=lambda s: sequencing.sort_key(s, groups))
+        return [(s, clustered[s]) for s in ordered]
 
 
 @dataclass
@@ -97,32 +122,39 @@ class Register:
         return [r.member_name for r in self.all_records() if r.member_name]
 
 
-def sort_records(records: Iterable[DrawingRecord]) -> list[DrawingRecord]:
-    """Order rows by zone, then sequence group, then member mark.
+def sort_records(records: Iterable[DrawingRecord],
+                 groups: list[list] | None = None) -> list[DrawingRecord]:
+    """Order rows by zone, then steel type, then member mark.
 
     Where a mark encodes zone and sequence ("17172C172"), that ordering is far
-    more meaningful than the file order the S.No fell back to. Rows without a
-    zone sort after those with one, and nothing here can raise on odd data.
+    more meaningful than the file order the S.No fell back to.
+
+    Within a zone the sequences run in erection order, not numeric order:
+    mezzanine steel (the 20s) is erected after roof steel (the 30s), so sorting
+    the sequence numbers would print the register back to front. See
+    ``fabdoc.sequencing``. Rows without a zone sort after those with one, and
+    nothing here can raise on odd data.
     """
     def key(rec: DrawingRecord):
         zone = (rec.zone or "").strip()
         zone_rank = (0, int(zone), "") if zone.isdigit() else ((1, 0, zone) if zone else (2, 0, ""))
-        seq = (rec.seq_group or "").strip()
-        seq_rank = (0, int(seq)) if seq.isdigit() else (1, 0)
-        return (zone_rank, seq_rank, natural_key(rec.member_name or rec.source_file))
+        return (zone_rank, sequencing.sort_key(rec.seq_group, groups),
+                natural_key(rec.member_name or rec.source_file))
 
     return sorted(records, key=key)
 
 
 def renumber_by_zone(records: Iterable[DrawingRecord]) -> None:
-    """Assign S.No 1..N restarting within each zone, in place.
+    """Assign S.No 1..N restarting within each zone and sequence, in place.
 
     The drawings carry no printed sequence number, so S.No is a position in the
-    register. Restarting per zone is what makes it useful to read.
+    register. It restarts at every band heading, which is what makes it read as
+    "the fourth drawing of sequence 172" rather than a running total nobody can
+    use. The band headings and the summary carry the counts.
     """
-    counters: dict[str, int] = {}
+    counters: dict[tuple[str, str], int] = {}
     for rec in records:
-        key = rec.zone or ""
+        key = (rec.zone or "", rec.seq_group or "")
         counters[key] = counters.get(key, 0) + 1
         rec.seq_no = str(counters[key])
 
@@ -171,7 +203,7 @@ def build_register(
             done += 1
             if progress:
                 progress(done, total, f"{cat.name}: {pdf.name}")
-        cat_reg.records = sort_records(cat_reg.records)
+        cat_reg.records = sort_records(cat_reg.records, cfg.sequence_groups)
         if cfg.group_by_zone:
             renumber_by_zone(cat_reg.records)
         register.categories.append(cat_reg)

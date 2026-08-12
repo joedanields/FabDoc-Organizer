@@ -868,7 +868,8 @@ class FabDocApp(ttk.Frame):
                     self._queue.put(("cancelled",))
                     return
                 path = write_register(reg, output,
-                                      include_source=settings.include_source_column)
+                                      include_source=settings.include_source_column,
+                                      sequence_groups=settings.sequence_groups)
                 self._queue.put(("done", reg, path))
             except Exception:
                 self._queue.put(("error", traceback.format_exc()))

@@ -14,6 +14,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
+from .sequencing import DEFAULT_SEQUENCE_GROUPS
+
 # ---------------------------------------------------------------------------
 # Drawing categories
 # ---------------------------------------------------------------------------
@@ -191,8 +193,16 @@ class AppSettings:
     # in the header band above the table rather than repeating on every row.
     include_source_column: bool = False
 
-    # Group register rows under a banded zone header, restarting S.No per zone.
+    # Group register rows under a banded zone header, and inside each zone
+    # under a banded sequence header, restarting S.No per sequence.
     group_by_zone: bool = True
+
+    # Steel types in erection order, keyed by the tens digit of the sequence
+    # code (see fabdoc.sequencing). Editable because the numbering is a project
+    # convention, not a property of steel.
+    sequence_groups: list[list] = field(
+        default_factory=lambda: [list(g) for g in DEFAULT_SEQUENCE_GROUPS]
+    )
 
     # Default output folder for generated registers (empty = project folder)
     default_output_folder: str = ""
@@ -213,6 +223,7 @@ class AppSettings:
             "compare_strip_leading_zeros": self.compare_strip_leading_zeros,
             "include_source_column": self.include_source_column,
             "group_by_zone": self.group_by_zone,
+            "sequence_groups": self.sequence_groups,
             "default_output_folder": self.default_output_folder,
             "default_tracker_folder": self.default_tracker_folder,
         }
@@ -226,7 +237,8 @@ class AppSettings:
             "category_aliases", "category_order", "day_first_dates",
             "compare_case_insensitive", "compare_ignore_whitespace",
             "compare_strip_leading_zeros", "include_source_column",
-            "group_by_zone", "default_output_folder", "default_tracker_folder",
+            "group_by_zone", "sequence_groups", "default_output_folder",
+            "default_tracker_folder",
         ):
             if key in data:
                 setattr(s, key, data[key])

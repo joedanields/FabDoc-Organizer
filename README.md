@@ -119,28 +119,42 @@ the table, not repeated on every row. Set `include_source_column` to `true` in
 settings to add `Source File` and `Notes` when you need to trace a flagged row
 back to its drawing.
 
-### Zones
+### Zones and sequences
 
 Many detailers encode the erection sequence into the member mark itself:
-`17172C172` is job `17`, sequence `172`, member `C172`, and the leading digit of
-the sequence gives **Zone 1**. Sequence `270` gives Zone 2, `471` gives Zone 4.
-
-When a package spans several zones they are **clustered in one worksheet**, each
-under a banded zone header, with `S.No` restarting at 1 per zone:
+`17172C172` is job `17`, sequence `172`, member `C172`. The sequence splits
+again — the **leading digit is the zone**, the **last two are the steel type**:
 
 ```
-ZONE 1   (Seq 172, 173)   -   64 drawing(s)
-S.No | Member Name | Revision No
-  1  | 17172C172   |      B
-  2  | 17172C242   |      B
-...
-ZONE 2   (Seq 270, 271)   -   55 drawing(s)
-S.No | Member Name | Revision No
-  1  | 17270C335   |      B
+17 172 C172        zone 1,  code 72  ->  Misc. / Stair Steel
+17 130 B4          zone 1,  code 30  ->  Roof Steel
+17 271 X9          zone 2,  code 71  ->  Misc. / Stair Steel
 ```
 
-The mark pattern is `member_seq_pattern` in settings; clear it to switch this
-off, or set `group_by_zone: false` for one flat table.
+Types group by the tens digit — 10s perimeter, 20s mezzanine, 30s roof, 50s
+elevator, 70s misc. and stair — and appear in **erection order, which is not
+numeric order**: mezzanine steel goes up after roof steel, so `121` bands after
+`130`.
+
+The worksheet nests zone, then sequence, with `S.No` restarting in each band and
+the counts carried on the headings:
+
+```
+ZONE 1   (Seq 172, 173)   -   56 drawing(s)
+    SEQ 172   -   Misc. / Stair Steel   -   42 drawing(s)
+    S.No | Member Name | Revision No
+      1  | 17172C172   |      A
+    SEQ 173   -   Misc. / Stair Steel   -   14 drawing(s)
+      1  | 17173C323   |      A
+ZONE 2   (Seq 270, 271)   -   51 drawing(s)
+    ...
+TOTAL   -   107 drawing(s)
+```
+
+The Summary sheet adds every sequence up to the register total. The type table
+is `sequence_groups` in settings (a list of `[tens digit, name]`, in band order)
+and the mark pattern is `member_seq_pattern`; clear that to switch the whole
+thing off, or set `group_by_zone: false` for one flat table.
 
 ### Comparing two issues
 
