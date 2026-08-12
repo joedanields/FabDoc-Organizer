@@ -19,6 +19,32 @@ python -m uvicorn app.main:app --port 8000
 Then open <http://127.0.0.1:8000>. The launcher installs the dependencies on
 first run and opens the browser for you.
 
+## Packaging it as an application
+
+Double-click **`Build FabDoc Web.bat`**. It installs the dependencies and
+PyInstaller, then writes the finished app to `web/dist/`.
+
+```
+Build FabDoc Web.bat            one folder, starts in about a second   (default)
+Build FabDoc Web.bat onefile    one single .exe, unpacks on every launch
+```
+
+The one-folder build is the default because a single-file build has to unpack
+around 80 MB to a temp directory every time it starts. Hand over the whole
+`dist\FabDoc Organizer` folder; the `.exe` inside it is what people run. Use
+`onefile` when it genuinely has to be one file to send.
+
+`run_app.py` is the entry point a frozen build uses, because there is no
+`python -m uvicorn` inside an executable. It picks the first free port from 8000,
+starts the server in-process, and opens the browser once the port answers rather
+than before. Running `python run_app.py` from a checkout does exactly the same
+thing, so the packaged behaviour can be tested without building.
+
+A packaged app keeps its `data/` folder **beside the executable**, not inside the
+bundle - a one-file build unpacks to a temporary directory that is deleted on
+exit, which would take every package tracker with it. Set `FABDOC_DATA` to put
+that folder somewhere else, such as a shared drive.
+
 ## Why it is a separate folder
 
 The desktop app deliberately depends on nothing but PyMuPDF and openpyxl —
