@@ -1,0 +1,20 @@
+# Normalise text to LF in the repository, native on checkout.
+* text=auto
+
+# cmd.exe is the exception: it reads batch files line by line and expects CRLF.
+# A .bat checked out with LF endings still runs on most machines, but the
+# tolerance is undocumented and version-dependent, and the failure mode when it
+# does bite is a launcher that silently does the wrong thing rather than one that
+# refuses to start. These are the files an engineer double-clicks, so pin them
+# regardless of what a given machine has core.autocrlf set to.
+#
+# The last matching pattern wins, so these must stay below the `* text=auto`
+# line above or they are overridden by it.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Windows shortcuts and icons are binary; never touch their bytes.
+*.ico binary
+*.png binary
+*.pdf binary
+*.xlsx binary
