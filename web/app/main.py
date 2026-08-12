@@ -218,36 +218,6 @@ def _profile_from(data: dict) -> ExtractionProfile:
     return profile
 
 
-def _sequence_groups_from(raw: object) -> list[list]:
-    """Validate the steel-type priority table coming back from the page.
-
-    Order is the erection order, so a duplicated decade is a real mistake: two
-    rows claiming the 70s would silently make the second unreachable and put a
-    whole sequence under the wrong heading.
-    """
-    if not isinstance(raw, list):
-        raise ValueError("The steel type table must be a list of rows.")
-    table: list[list] = []
-    seen: set[int] = set()
-    for entry in raw:
-        if not isinstance(entry, (list, tuple)) or len(entry) != 2:
-            raise ValueError("Each steel type needs a sequence digit and a name.")
-        try:
-            decade = int(entry[0])
-        except (TypeError, ValueError):
-            raise ValueError(f"'{entry[0]}' is not a sequence digit (0-9).")
-        if not 0 <= decade <= 9:
-            raise ValueError(f"Sequence digit {decade} must be between 0 and 9.")
-        if decade in seen:
-            raise ValueError(f"Sequence digit {decade} is listed twice.")
-        seen.add(decade)
-        name = str(entry[1]).strip()
-        if not name:
-            raise ValueError(f"Sequence digit {decade} has no name.")
-        table.append([decade, name])
-    return table
-
-
 @app.post("/api/settings")
 async def api_save_settings(request: Request):
     """Persist the whole profile to ~/.fabdoc/settings.json - the file the
@@ -268,11 +238,6 @@ async def api_save_settings(request: Request):
     for key in ("default_output_folder", "default_tracker_folder"):
         if key in body:
             setattr(settings, key, str(body[key] or "").strip())
-    if "sequence_groups" in body:
-        try:
-            settings.sequence_groups = _sequence_groups_from(body["sequence_groups"])
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, str(exc))
     if isinstance(body.get("category_aliases"), dict):
         settings.category_aliases = {
             str(k): [str(x) for x in v] for k, v in body["category_aliases"].items()
@@ -599,8 +564,7 @@ async def api_generate(
 
         job.progress(job.total, job.total, "Writing the workbook...")
         write_register(register, out_path,
-                       include_source=settings.include_source_column,
-                       sequence_groups=settings.sequence_groups)
+                       include_source=settings.include_source_column)
         disk.remember(out_path)
         _LAST["register"] = register
         _LAST["path"] = str(out_path)
@@ -660,7 +624,8 @@ def _track(register, root: Path, stage: str, round_no: str, settings,
             "released": len(step.released),
             "tracker_path": str(tracker),
             "members": [
-                {"member": h.member_name, "zone": h.zone, "revision": h.revision,
+                {"id": h.ident, "member": h.member_name, "category": h.category,
+                 "zone": h.zone, "revision": h.revision,
                  "since": h.held_since, "reason": h.reason}
                 for h in step.on_hold
             ],
@@ -714,6 +679,38 @@ async def api_reasons(request: Request):
             "without_reason": len(chain.missing_reasons())}
 
 
+@app.post("/api/tracker/info")
+async def api_tracker_info(request: Request):
+    """What a chosen tracker file already contains.
+
+    Picking an existing tracker must add this issue to that chain, never start a
+    second one beside it. The page states what it found so the engineer sees the
+    package name and issue count before running, rather than discovering
+    afterwards that a fabrication release began its own empty history.
+    """
+    body = await request.json()
+    raw = str(body.get("path") or "").strip().strip('"')
+    if not raw:
+        return {"exists": False}
+    tracker = Path(raw)
+    if not disk.is_local_client(_client(request)):
+        tracker = ws.TRACKER_ROOT / tracker.name
+    state_file = state_path_for(tracker)
+    if not state_file.exists():
+        return {"exists": tracker.exists(), "tracked": False, "path": str(tracker)}
+
+    state = load_state(state_file)
+    return {
+        "exists": True,
+        "tracked": True,
+        "path": str(tracker),
+        "project": state.project,
+        "issues": len(state.issues),
+        "last": state.issues[-1].label if state.issues else "",
+        "stages": [e.code for e in state.issues],
+    }
+
+
 @app.get("/api/trackers")
 def api_trackers():
     return {"trackers": ws.list_trackers()}
@@ -728,7 +725,8 @@ def api_tracker(name: str):
     chain = build_chain(load_state(state_file), load_settings())
     payload = _chain_payload(chain, tracker)
     payload["holds"] = [
-        {"member": h.member_name, "zone": h.zone, "revision": h.revision,
+        {"id": h.ident, "member": h.member_name, "category": h.category,
+         "zone": h.zone, "revision": h.revision,
          "since": h.held_since, "released": h.released_in, "reason": h.reason}
         for h in chain.holds.values()
     ]

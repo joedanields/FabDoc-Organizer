@@ -23,6 +23,11 @@ from fabdoc.tracking import (STAGE_IFA, STAGE_IFF, ChainState, IssueEntry,
 from fabdoc.tracking_out import write_tracker
 
 
+def key(mark: str, category: str = "Assembly") -> str:
+    """The id the chain tracks a mark under, now that category is part of it."""
+    return f"{category}::{mark}"
+
+
 def issue(label: str, stage: str, round_no: str, marks: dict[str, str]) -> IssueEntry:
     members: "OrderedDict[str, dict[str, str]]" = OrderedDict()
     for mark, rev in marks.items():
@@ -48,10 +53,10 @@ def test_ifa_round_reports_added_revised_and_removed():
     state.add_issue(issue("IFA-15", STAGE_IFA, "15", {"A1": "A", "A2": "A", "A3": "A"}))
     state.add_issue(issue("IFA-25", STAGE_IFA, "25", {"A1": "A", "A2": "B", "A9": "A"}))
     step = build_chain(state).steps[-1]
-    assert step.added == ["A9"]
-    assert step.removed == ["A3"]
-    assert [r[0] for r in step.revised] == ["A2"]
-    assert step.unchanged == ["A1"]
+    assert step.added == [key("A9")]
+    assert step.removed == [key("A3")]
+    assert [r[0] for r in step.revised] == [key("A2")]
+    assert step.unchanged == [key("A1")]
 
 
 def test_within_approval_a_dropped_drawing_is_still_removed():
@@ -60,7 +65,7 @@ def test_within_approval_a_dropped_drawing_is_still_removed():
     state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A", "A2": "A"}))
     state.add_issue(issue("IFA-2", STAGE_IFA, "2", {"A1": "B"}))
     step = build_chain(state).steps[-1]
-    assert step.removed == ["A2"]
+    assert step.removed == [key("A2")]
     assert not step.on_hold
 
 
@@ -72,7 +77,7 @@ def test_unshipped_members_are_on_hold_not_removed():
     step = chain.steps[-1]
     assert step.removed == []
     assert sorted(h.member_name for h in step.on_hold) == ["A3", "A4", "A5"]
-    assert sorted(step.released) == ["A1", "A2"]
+    assert sorted(step.released) == [key("A1"), key("A2")]
 
 
 def test_second_release_does_not_mark_the_first_as_removed():
@@ -80,7 +85,7 @@ def test_second_release_does_not_mark_the_first_as_removed():
     chain = build_chain(approved_then_released([{"A1": "A", "A2": "A"}, {"A3": "A"}]))
     step = chain.steps[-1]
     assert step.removed == []
-    assert step.released == ["A3"]
+    assert step.released == [key("A3")]
     assert sorted(h.member_name for h in step.on_hold) == ["A4", "A5"]
 
 
@@ -95,7 +100,7 @@ def test_outstanding_shrinks_with_every_release():
 
 def test_a_held_member_records_where_it_finally_shipped():
     chain = build_chain(approved_then_released([{"A1": "A"}, {"A3": "A"}]))
-    hold = chain.holds["A3"]
+    hold = chain.holds[key("A3")]
     assert hold.held_since == "IFF-1"
     assert hold.released_in == "IFF-2"
     assert hold not in chain.outstanding
@@ -104,8 +109,8 @@ def test_a_held_member_records_where_it_finally_shipped():
 def test_a_release_may_add_scope_the_baseline_never_had():
     chain = build_chain(approved_then_released([{"A1": "A", "NEW9": "A"}]))
     step = chain.steps[-1]
-    assert step.added == ["NEW9"]
-    assert step.released == ["A1"]
+    assert step.added == [key("NEW9")]
+    assert step.released == [key("A1")]
 
 
 def test_fabrication_without_a_prior_approval_uses_itself_as_baseline():
@@ -113,7 +118,7 @@ def test_fabrication_without_a_prior_approval_uses_itself_as_baseline():
     state.add_issue(issue("IFF-1", STAGE_IFF, "1", {"A1": "A"}))
     chain = build_chain(state)
     assert chain.outstanding == []
-    assert chain.steps[-1].released == ["A1"]
+    assert chain.steps[-1].released == [key("A1")]
 
 
 # -------------------------------------------------------------- hold reasons
@@ -127,27 +132,29 @@ def test_outstanding_members_start_without_a_reason():
 def test_a_batch_reason_can_be_overridden_per_member():
     state = approved_then_released([{"A1": "A"}])
     chain = build_chain(state)
-    reasons = {h.member_name: "Client hold" for h in chain.outstanding}
-    reasons["A5"] = "Material shortage"
+    # Keyed by identity, not by the displayed mark: that is what a dialog
+    # hands back, and what keeps an assembly and a part apart.
+    reasons = {h.ident: "Client hold" for h in chain.outstanding}
+    reasons[key("A5")] = "Material shortage"
     apply_reasons(state, reasons)
     chain = build_chain(state)
     assert chain.missing_reasons() == []
-    assert chain.holds["A5"].reason == "Material shortage"
-    assert chain.holds["A4"].reason == "Client hold"
+    assert chain.holds[key("A5")].reason == "Material shortage"
+    assert chain.holds[key("A4")].reason == "Client hold"
 
 
 def test_a_reason_survives_into_later_releases():
     state = approved_then_released([{"A1": "A"}])
-    apply_reasons(state, {"A5": "Client hold"})
+    apply_reasons(state, {key("A5"): "Client hold"})
     state.add_issue(issue("IFF-2", STAGE_IFF, "2", {"A2": "A"}))
     chain = build_chain(state)
-    assert chain.holds["A5"].reason == "Client hold"
+    assert chain.holds[key("A5")].reason == "Client hold"
 
 
 def test_blank_reasons_are_ignored():
     state = approved_then_released([{"A1": "A"}])
-    apply_reasons(state, {"A5": "   "})
-    assert build_chain(state).holds["A5"].needs_reason
+    apply_reasons(state, {key("A5"): "   "})
+    assert build_chain(state).holds[key("A5")].needs_reason
 
 
 # ------------------------------------------------------------- state and names
@@ -163,14 +170,14 @@ def test_reprocessing_a_folder_updates_it_rather_than_chaining_a_duplicate():
 
 def test_chain_state_round_trips_through_json(tmp_path: Path):
     state = approved_then_released([{"A1": "A"}])
-    apply_reasons(state, {"A5": "Client hold"})
+    apply_reasons(state, {key("A5"): "Client hold"})
     path = state_path_for(tmp_path / "Package Tracker.xlsx")
     save_state(state, path)
     assert path.name.endswith(".chain.json")
 
     reloaded = load_state(path)
     assert [e.label for e in reloaded.issues] == ["IFA-1", "IFF-1"]
-    assert build_chain(reloaded).holds["A5"].reason == "Client hold"
+    assert build_chain(reloaded).holds[key("A5")].reason == "Client hold"
 
 
 def test_missing_state_file_yields_an_empty_chain(tmp_path: Path):
@@ -203,10 +210,10 @@ def test_a_title_without_a_purpose_clause_is_left_alone():
 
 def test_tracker_workbook_has_the_expected_sheets(tmp_path: Path):
     state = approved_then_released([{"A1": "A"}])
-    apply_reasons(state, {"A5": "Client hold"})
+    apply_reasons(state, {key("A5"): "Client hold"})
     out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
     wb = load_workbook(out)
-    assert wb.sheetnames == ["Tracker", "Member History", "Change Log", "On Hold"]
+    assert wb.sheetnames == ["Tracker", "History - Assembly", "Change Log", "On Hold"]
     wb.close()
 
 
@@ -216,7 +223,7 @@ def test_member_history_shows_a_revision_per_issue(tmp_path: Path):
     state.add_issue(issue("IFA-2", STAGE_IFA, "2", {"A1": "B"}))
     out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
     wb = load_workbook(out)
-    ws = wb["Member History"]
+    ws = wb["History - Assembly"]
     assert [c.value for c in ws[3]] == ["Member Name", "Zone", "IFA-1", "IFA-2"]
     assert [c.value for c in ws[4]][:1] + [c.value for c in ws[4]][2:] == ["A1", "A", "B"]
     wb.close()
@@ -224,7 +231,7 @@ def test_member_history_shows_a_revision_per_issue(tmp_path: Path):
 
 def test_on_hold_sheet_carries_the_reason(tmp_path: Path):
     state = approved_then_released([{"A1": "A"}])
-    apply_reasons(state, {h: "Client hold" for h in ("A2", "A3", "A4", "A5")})
+    apply_reasons(state, {key(h): "Client hold" for h in ("A2", "A3", "A4", "A5")})
     out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
     wb = load_workbook(out)
     rows = list(wb["On Hold"].iter_rows(min_row=4, values_only=True))
@@ -241,6 +248,89 @@ def test_snapshot_keeps_one_row_per_member(tmp_path: Path):
     for mark in ("17172C1", "17172C2", "17271X1"):
         make_drawing(root / "Assembly" / f"{mark}  - Rev A.pdf", mark, revision="A")
     snap = snapshot_register(build_register(root))
-    assert set(snap) == {"17172C1", "17172C2", "17271X1"}
-    assert snap["17271X1"]["rev"] == "A"
-    assert snap["17271X1"]["zone"] == "2"
+    # Keyed by category and mark, because a part drawing may carry the same one.
+    assert set(snap) == {key("17172C1"), key("17172C2"), key("17271X1")}
+    assert snap[key("17271X1")]["rev"] == "A"
+    assert snap[key("17271X1")]["zone"] == "2"
+    assert snap[key("17271X1")]["name"] == "17271X1"
+
+
+# ------------------------------------------------- categories in one tracker
+
+
+def part(label: str, stage: str, round_no: str,
+         marks: dict[str, str], category: str) -> IssueEntry:
+    members: "OrderedDict[str, dict[str, str]]" = OrderedDict()
+    for mark, rev in marks.items():
+        members[mark] = {"rev": rev, "zone": "1", "category": category}
+    return IssueEntry(label=label, stage=stage, round_no=round_no, members=members)
+
+
+def test_a_part_and_an_assembly_sharing_a_mark_are_two_items():
+    """Keyed by mark alone, whichever was read second overwrote the first.
+
+    An assembly drawing is fabricated and a single-part drawing is cut; they
+    are different deliverables that routinely carry the same mark.
+    """
+    members: "OrderedDict[str, dict[str, str]]" = OrderedDict()
+    members["17172C172"] = {"rev": "A", "category": "Assembly"}
+    members["Part::17172C172"] = {"rev": "0", "category": "Part"}
+    entry = IssueEntry(label="IFA-1", stage=STAGE_IFA, round_no="1", members=members)
+
+    assert entry.total == 2
+    assert set(entry.members) == {"Assembly::17172C172", "Part::17172C172"}
+    assert entry.members["Part::17172C172"]["name"] == "17172C172"
+
+
+def test_a_part_is_not_released_by_shipping_the_assembly():
+    state = ChainState(project="Zone 1")
+    state.add_issue(part("IFA-1", STAGE_IFA, "1", {"C172": "A"}, "Assembly"))
+    state.issues[-1].members["Part::C172"] = {
+        "name": "C172", "rev": "0", "zone": "1", "category": "Part"}
+    state.issues[-1].__post_init__()
+    state.add_issue(part("IFF-2", STAGE_IFF, "2", {"C172": "A"}, "Assembly"))
+
+    chain = build_chain(state)
+    step = chain.steps[-1]
+    assert step.released == ["Assembly::C172"]
+    # The part of the same mark has not shipped and is still owed.
+    assert [h.ident for h in step.on_hold] == ["Part::C172"]
+    assert [h.category for h in chain.outstanding] == ["Part"]
+
+
+def test_every_category_shares_one_tracker_file(tmp_path: Path):
+    """Parts get their own sheet, not their own workbook.
+
+    A package that issues assemblies and single parts is one package with one
+    chain; a second file would break the chaining the tracker exists for.
+    """
+    state = ChainState(project="Zone 1")
+    entry = part("IFA-1", STAGE_IFA, "1", {"C1": "A", "C2": "A"}, "Assembly")
+    entry.members["Part::P9"] = {"name": "P9", "rev": "0", "zone": "1",
+                                 "category": "Part"}
+    entry.__post_init__()
+    state.add_issue(entry)
+
+    out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
+    assert list(tmp_path.glob("*.xlsx")) == [out], "a second workbook was written"
+
+    wb = load_workbook(out)
+    try:
+        assert wb.sheetnames == ["Tracker", "History - Assembly", "History - Part",
+                                 "Change Log"]
+        assert [r[0] for r in wb["History - Part"].iter_rows(min_row=4,
+                                                             values_only=True)] == ["P9"]
+        assert sorted(r[0] for r in wb["History - Assembly"].iter_rows(
+            min_row=4, values_only=True)) == ["C1", "C2"]
+    finally:
+        wb.close()
+
+
+def test_reasons_can_be_keyed_by_identity_or_by_mark():
+    """A dialog hands back whatever it used as a row id."""
+    state = ChainState(project="Zone 1")
+    state.add_issue(part("IFA-1", STAGE_IFA, "1", {"A1": "A", "A2": "A"}, "Assembly"))
+    state.add_issue(part("IFF-2", STAGE_IFF, "2", {"A1": "A"}, "Assembly"))
+
+    apply_reasons(state, {"Assembly::A2": "Client hold"})
+    assert build_chain(state).holds["Assembly::A2"].reason == "Client hold"

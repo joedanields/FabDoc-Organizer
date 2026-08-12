@@ -10,6 +10,7 @@ register) and that module is already the larger of the two.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +23,8 @@ from .categories import safe_sheet_name
 from .excel_out import (_BORDER, _CENTER, _HEADER_FILL, _HEADER_FONT, _LABEL_FONT,
                         _LEFT, _OK_FILL, _REVIEW_FILL, _TITLE_FILL, _TITLE_FONT,
                         _VALUE_FONT, _save_workbook)
-from .tracking import STAGE_IFA, STAGE_IFF, PackageChain
+from .tracking import (STAGE_IFA, STAGE_IFF, PackageChain,
+                       split_member_id)
 
 _IFA_FILL = PatternFill("solid", fgColor="DDEBF7")    # blue: still in approval
 _IFF_FILL = PatternFill("solid", fgColor="E2EFDA")    # green: released to shop
@@ -112,29 +114,41 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 
-def _write_history(ws: Worksheet, chain: PackageChain) -> None:
+def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
+                   members: list[str] | None = None) -> None:
     """Member down the side, issue across the top, revision in the cell.
 
     This is the rev-by-rev view: one glance shows a member's whole life, when it
     entered the package, every revision it went through, and which release it
     shipped in.
+
+    One sheet per drawing category, because an assembly and a single part are
+    different deliverables that happen to share a mark - reading them in one
+    list invites treating a cut part as a fabricated assembly.
     """
     labels = [e.label for e in chain.issues]
     columns = ["Member Name", "Zone"] + [e.code for e in chain.issues]
-    _title(ws, "MEMBER HISTORY - REVISION BY ISSUE", max(len(columns), 3))
+    heading = "MEMBER HISTORY - REVISION BY ISSUE"
+    if category:
+        heading += f"   ({category})"
+    _title(ws, heading, max(len(columns), 3))
 
     _headers(ws, columns, 3)
-    held = {h.member_name for h in chain.outstanding}
+    held = {h.ident for h in chain.outstanding}
 
     row = 4
-    for member, per_issue in chain.history.items():
+    for member in (members if members is not None else list(chain.history)):
+        per_issue = chain.history.get(member, {})
         zone = ""
+        name = split_member_id(member)[1]
         for entry in chain.issues:
             info = entry.members.get(member)
-            if info and info.get("zone"):
-                zone = info["zone"]
-                break
-        cells: list[object] = [member, zone]
+            if info:
+                name = info.get("name") or name
+                if info.get("zone"):
+                    zone = info["zone"]
+                    break
+        cells: list[object] = [name, zone]
         for label in labels:
             cells.append(per_issue.get(label, ""))
         for c_idx, value in enumerate(cells, start=1):
@@ -191,7 +205,8 @@ def _write_holds(ws: Worksheet, chain: PackageChain) -> None:
 
 def _write_changes(ws: Worksheet, chain: PackageChain) -> None:
     """Every change, issue by issue - the comparison log, flattened."""
-    columns = ["Issue", "Code", "Stage", "Change", "Member Name", "From Rev", "To Rev"]
+    columns = ["Issue", "Code", "Stage", "Change", "Category", "Member Name",
+               "From Rev", "To Rev"]
     _title(ws, "CHANGE LOG", len(columns))
     _headers(ws, columns, 3)
 
@@ -202,25 +217,38 @@ def _write_changes(ws: Worksheet, chain: PackageChain) -> None:
             ("Revised", list(step.revised), _REVIEW_FILL),
             ("Removed", [(m, "", "") for m in step.removed], _HOLD_FILL),
             ("Released", [(m, "", "") for m in step.released], _IFF_FILL),
-            ("On Hold", [(h.member_name, h.revision, "") for h in step.on_hold], _HOLD_FILL),
+            ("On Hold", [(h.ident, h.revision, "") for h in step.on_hold], _HOLD_FILL),
         ]
         for change, items, fill in groups:
             for item in items:
-                name, from_rev, to_rev = item
+                ident, from_rev, to_rev = item
+                # The lists carry identities, so the same mark issued as both an
+                # assembly and a part reads as the two separate rows it is.
+                category, name = split_member_id(ident)
                 values = [step.new_label, step.code, step.stage, change,
-                          name, from_rev, to_rev]
+                          category, name, from_rev, to_rev]
                 for c_idx, value in enumerate(values, start=1):
                     cell = ws.cell(row=row, column=c_idx, value=value)
                     cell.border = _BORDER
-                    cell.alignment = _LEFT if c_idx in (1, 5) else _CENTER
+                    cell.alignment = _LEFT if c_idx in (1, 6) else _CENTER
                     cell.fill = fill
                 row += 1
 
     ws.freeze_panes = "A4"
     if row > 4:
         ws.auto_filter.ref = f"A3:{get_column_letter(len(columns))}{row - 1}"
-    for idx, width in enumerate([46, 10, 8, 12, 24, 11, 11], start=1):
+    for idx, width in enumerate([46, 10, 8, 12, 14, 24, 11, 11], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
+
+
+def _by_category(chain: PackageChain) -> list[tuple[str, list[str]]]:
+    """Members grouped by drawing category, in the order they were first seen."""
+    grouped: "OrderedDict[str, list[str]]" = OrderedDict()
+    for ident in chain.history:
+        grouped.setdefault(split_member_id(ident)[0], []).append(ident)
+    if not grouped:
+        return [("", [])]
+    return list(grouped.items())
 
 
 def write_tracker(chain: PackageChain, output_path: str | Path) -> Path:
@@ -233,7 +261,16 @@ def write_tracker(chain: PackageChain, output_path: str | Path) -> Path:
 
     used: set[str] = set()
     _write_summary(wb.create_sheet(safe_sheet_name("Tracker", used)), chain)
-    _write_history(wb.create_sheet(safe_sheet_name("Member History", used)), chain)
+
+    # One history sheet per drawing category, in the same workbook. A package
+    # that issues assembly and single-part drawings is one package with one
+    # chain - splitting it across two tracker files would break the chaining
+    # that the tracker exists for.
+    for category, members in _by_category(chain):
+        title = f"History - {category}" if category else "Member History"
+        _write_history(wb.create_sheet(safe_sheet_name(title, used)), chain,
+                       category, members)
+
     _write_changes(wb.create_sheet(safe_sheet_name("Change Log", used)), chain)
     if chain.holds:
         _write_holds(wb.create_sheet(safe_sheet_name("On Hold", used)), chain)

@@ -496,30 +496,6 @@ def test_settings_round_trip_to_the_file_the_desktop_app_reads(local: TestClient
     assert reloaded.default_output_folder == str(tmp_path / "Registers")
 
 
-def test_the_steel_type_table_round_trips(local: TestClient):
-    """The erection order is a project convention, so it is editable."""
-    from fabdoc.config import load_settings
-
-    saved = local.post("/api/settings", json={
-        "sequence_groups": [[7, "Stairs First"], [1, "Perimeter Last"]],
-    })
-    assert saved.status_code == 200, saved.text
-    assert load_settings().sequence_groups == [[7, "Stairs First"], [1, "Perimeter Last"]]
-
-
-@pytest.mark.parametrize("table,why", [
-    ([[7, "Misc"], [7, "Stairs"]], "the same decade listed twice"),
-    ([[7, ""]], "a group with no name"),
-    ([["seven", "Misc"]], "a decade that is not a number"),
-    ([[70, "Misc"]], "a decade outside 0-9"),
-    ([[7]], "a row missing its name"),
-])
-def test_a_broken_steel_type_table_is_refused(local: TestClient, table, why):
-    """Two rows claiming the 70s would put a whole sequence under the wrong heading."""
-    r = local.post("/api/settings", json={"sequence_groups": table})
-    assert r.status_code == 400, why
-
-
 @pytest.mark.parametrize("rect,why", [
     ([0.9, 0.1, 0.2, 0.9], "left past right"),
     ([0.1, 0.9, 0.9, 0.2], "top past bottom"),
@@ -585,3 +561,85 @@ def test_only_files_this_app_wrote_can_be_opened_or_downloaded(local: TestClient
     assert local.get("/download/file", params={"path": str(secret)}).status_code == 404
     assert local.post("/api/open", json={"path": str(secret)}).status_code == 400
     assert not disk.is_remembered(secret)
+
+
+# ------------------------------------------------------- existing trackers
+
+
+def test_picking_an_existing_tracker_adds_to_it(local: TestClient, project_folder: Path,
+                                                single_category_folder: Path,
+                                                tmp_path: Path):
+    """Naming the same tracker twice must chain, not start a second history.
+
+    This is what went wrong on the real job: each issue titled itself
+    differently, the suggested tracker name followed the title, and the
+    fabrication release opened its own empty chain - so nothing was ever
+    reported on hold.
+    """
+    tracker_dir = tmp_path / "trackers"
+    for folder, stage, rnd in ((project_folder, "IFA", "1"),
+                               (single_category_folder, "IFF", "2")):
+        started = local.post("/api/generate", data={
+            "local_path": str(folder), "categories": ["Structural", "Erection"],
+            "output_folder": str(tmp_path / "out"), "output_name": f"R{rnd}.xlsx",
+            "track": "true", "stage": stage, "round_no": rnd, "project": "Zone 1",
+            "tracker_folder": str(tracker_dir), "tracker_name": "Zone 1 - Tracker.xlsx",
+        })
+        result = _finish(local, started.json()["job"])
+        assert result["state"] == "done", result.get("error")
+
+    assert [p.name for p in sorted(tracker_dir.glob("*.xlsx"))] == ["Zone 1 - Tracker.xlsx"]
+    chain = result["result"]["chain"]
+    assert len(chain["issues"]) == 2
+    # The release found the approved scope, so the balance is on hold.
+    assert chain["outstanding"] > 0
+
+
+def test_tracker_info_reports_what_a_chosen_file_already_holds(local: TestClient,
+                                                               project_folder: Path,
+                                                               tmp_path: Path):
+    """The page states the chain before the run, not after."""
+    tracker = tmp_path / "trackers" / "Zone 1 - Tracker.xlsx"
+
+    unknown = local.post("/api/tracker/info", json={"path": str(tracker)}).json()
+    assert unknown["exists"] is False
+
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(tmp_path / "out"), "output_name": "R.xlsx",
+        "track": "true", "stage": "IFA", "round_no": "1", "project": "Zone 1",
+        "tracker_folder": str(tracker.parent), "tracker_name": tracker.name,
+    })
+    assert _finish(local, started.json()["job"])["state"] == "done"
+
+    known = local.post("/api/tracker/info", json={"path": str(tracker)}).json()
+    assert known["tracked"] is True
+    assert known["project"] == "Zone 1"
+    assert known["issues"] == 1
+    assert known["stages"] == ["IFA-1"]
+
+
+def test_parts_and_assemblies_share_one_tracker_workbook(local: TestClient,
+                                                         project_folder: Path,
+                                                         tmp_path: Path):
+    """Every category lands in the same file, on its own sheet."""
+    from openpyxl import load_workbook
+
+    tracker = tmp_path / "trackers" / "Zone 1 - Tracker.xlsx"
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder),
+        "categories": ["Structural", "Erection", "Part"],
+        "output_folder": str(tmp_path / "out"), "output_name": "R.xlsx",
+        "track": "true", "stage": "IFA", "round_no": "1", "project": "Zone 1",
+        "tracker_folder": str(tracker.parent), "tracker_name": tracker.name,
+    })
+    assert _finish(local, started.json()["job"])["state"] == "done"
+
+    assert list(tracker.parent.glob("*.xlsx")) == [tracker]
+    wb = load_workbook(tracker)
+    try:
+        histories = [n for n in wb.sheetnames if n.startswith("History")]
+        assert histories == ["History - Structural", "History - Erection",
+                             "History - Part"]
+    finally:
+        wb.close()

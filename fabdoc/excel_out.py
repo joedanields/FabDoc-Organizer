@@ -102,8 +102,7 @@ def _style_header_band(ws: Worksheet, register: Register, category: CategoryRegi
 
 def _write_category_sheet(ws: Worksheet, register: Register,
                           category: CategoryRegister, include_source: bool,
-                          group_by_zone: bool = True,
-                          sequence_groups: list[list] | None = None) -> None:
+                          group_by_zone: bool = True) -> None:
     # Project title and date live in the header band above, not repeated on
     # every row - the register is a deliverable, not a database export.
     headers = ["S.No", "Member Name", "Revision No"]
@@ -158,22 +157,20 @@ def _write_category_sheet(ws: Worksheet, register: Register,
 
     for zone, records in groups:
         if zone:
-            seqs = category.sequences_for(zone, sequence_groups)
+            seqs = category.sequences_for(zone)
             label = f"ZONE {zone}"
             if seqs:
                 label += f"   (Seq {', '.join(seqs)})"
             label += f"   -   {len(records)} drawing(s)"
             band(label, _ZONE_FONT, _ZONE_FILL)
 
-        # Inside a zone the drawings are split again by sequence, because the
-        # sequence is what the shop erects to - the leading digit is the zone
-        # and the last two say which steel it is. A zone of 56 drawings read as
-        # one list hides that it is two separate releases of work.
-        clusters = (category.sequence_groups(zone, sequence_groups)
-                    if zone else [("", records)])
+        # Inside a zone the drawings are split again by sequence: the sequence
+        # is what the shop erects to, and a zone of 500 drawings read as one
+        # list hides that it is twenty separate slices of work.
+        clusters = category.sequence_groups(zone) if zone else [("", records)]
         for seq_no, seq_records in clusters:
             if seq_no:
-                band(f"    {sequencing.label_for(seq_no, sequence_groups)}"
+                band(f"    {sequencing.label_for(seq_no)}"
                      f"   -   {len(seq_records)} drawing(s)",
                      _SEQ_FONT, _SEQ_FILL)
             table(seq_records)
@@ -206,26 +203,26 @@ def _write_category_sheet(ws: Worksheet, register: Register,
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 
-def _write_sequence_breakdown(ws: Worksheet, register: Register,
-                              sequence_groups: list[list] | None, row: int) -> int:
+def _write_sequence_breakdown(ws: Worksheet, register: Register, row: int) -> int:
     """How many drawings sit in each zone and sequence. Returns the next free row.
 
     The register itself restarts S.No at every band, so this is the one place
-    that adds up: every sequence, its steel type, its count, and a total that
+    that adds up: every sequence, its category, its count, and a total that
     must equal the category totals above it.
     """
-    tally: dict[tuple[str, str], int] = {}
-    for rec in register.all_records():
-        tally[(rec.zone or "", rec.seq_group or "")] = \
-            tally.get((rec.zone or "", rec.seq_group or ""), 0) + 1
-    if not tally or list(tally) == [("", "")]:
+    tally: dict[tuple[str, str, str], int] = {}
+    for cat in register.categories:
+        for rec in cat.records:
+            key = (rec.zone or "", rec.seq_group or "", cat.name)
+            tally[key] = tally.get(key, 0) + 1
+    if not tally or all(not z and not s for z, s, _ in tally):
         return row          # this package does not encode zone or sequence
 
     heading = ws.cell(row=row, column=1, value="DRAWINGS BY SEQUENCE")
     heading.font = _LABEL_FONT
     row += 1
 
-    for idx, name in enumerate(["Zone", "Sequence", "Steel Type", "Drawings"], start=1):
+    for idx, name in enumerate(["Zone", "Sequence", "Category", "Drawings"], start=1):
         c = ws.cell(row=row, column=idx, value=name)
         c.font = _HEADER_FONT
         c.fill = _HEADER_FILL
@@ -233,14 +230,13 @@ def _write_sequence_breakdown(ws: Worksheet, register: Register,
         c.border = _BORDER
     row += 1
 
-    def order(key: tuple[str, str]) -> tuple:
-        zone, seq = key
+    def order(key: tuple[str, str, str]) -> tuple:
+        zone, seq, cat = key
         zone_rank = (0, int(zone)) if zone.isdigit() else (1, 0)
-        return (zone_rank, sequencing.sort_key(seq, sequence_groups))
+        return (zone_rank, sequencing.sort_key(seq), cat)
 
-    for zone, seq in sorted(tally, key=order):
-        _, name = sequencing.group_for(seq, sequence_groups)
-        values = [zone or "-", seq or "-", name or "-", tally[(zone, seq)]]
+    for zone, seq, cat in sorted(tally, key=order):
+        values = [zone or "-", seq or "-", cat, tally[(zone, seq, cat)]]
         for idx, value in enumerate(values, start=1):
             c = ws.cell(row=row, column=idx, value=value)
             c.border = _BORDER
@@ -255,8 +251,7 @@ def _write_sequence_breakdown(ws: Worksheet, register: Register,
     return row + 1
 
 
-def _write_summary_sheet(ws: Worksheet, register: Register,
-                         sequence_groups: list[list] | None = None) -> None:
+def _write_summary_sheet(ws: Worksheet, register: Register) -> None:
     """Counts per category, so a large register can be sanity-checked at a glance."""
     meta = register.meta
     ws.merge_cells("A1:D1")
@@ -312,7 +307,7 @@ def _write_summary_sheet(ws: Worksheet, register: Register,
         c.alignment = _CENTER if idx > 1 else _LEFT
 
     row += 3
-    row = _write_sequence_breakdown(ws, register, sequence_groups, row)
+    row = _write_sequence_breakdown(ws, register, row)
 
     row += 2
     note = ws.cell(
@@ -330,8 +325,7 @@ def _write_summary_sheet(ws: Worksheet, register: Register,
 
 def write_register(register: Register, output_path: str | Path,
                    include_source: bool = False, include_summary: bool = True,
-                   group_by_zone: bool = True,
-                   sequence_groups: list[list] | None = None) -> Path:
+                   group_by_zone: bool = True) -> Path:
     """Write the register to an .xlsx workbook, one worksheet per category."""
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -340,13 +334,12 @@ def write_register(register: Register, output_path: str | Path,
     wb.remove(wb.active)
 
     if include_summary:
-        _write_summary_sheet(wb.create_sheet("Summary"), register, sequence_groups)
+        _write_summary_sheet(wb.create_sheet("Summary"), register)
 
     used: set[str] = {"Summary"} if include_summary else set()
     for cat in register.categories:
         ws = wb.create_sheet(safe_sheet_name(cat.name, used))
-        _write_category_sheet(ws, register, cat, include_source, group_by_zone,
-                              sequence_groups)
+        _write_category_sheet(ws, register, cat, include_source, group_by_zone)
 
     if not register.categories and not include_summary:
         wb.create_sheet("Register")

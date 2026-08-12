@@ -150,73 +150,31 @@ A register you cannot audit is worse than no register, because it gets trusted.
 ### 3.4 Zone and sequence come out of the mark
 
 Many detailers encode the erection sequence into the mark: `17172C172` is job
-`17`, sequence `172`, member `C172`. The sequence is itself two fields:
+`17`, sequence `172`, member `C172`. The **leading digit of the sequence is the
+zone**, so `270` is Zone 2 and `471` is Zone 4.
+
+The register is segregated by zone, and inside each zone by sequence:
 
 ```
-17 172 C172
-│  │└┴─ code 72  — what kind of steel
-│  └─── zone 1
-└────── job 17
+ZONE 1   (Seq 10, 11, 12, 120 ... 139)   -   552 drawing(s)
+    SEQ 10    -   12 drawing(s)
+    S.No | Member Name | Revision No
+      1  | 1710B84     |      0
+    SEQ 120   -   8 drawing(s)
+      1  | 17120B163   |      0
+TOTAL   -   552 drawing(s)
 ```
 
-The **leading digit is the zone**, so sequence `270` is Zone 2. The **last two
-digits are the steel type**, grouped by their tens digit:
-
-| Code | Steel type | Order |
-| --- | --- | --- |
-| 10, 11, … | Perimeter Steel (anchor bolts, slab embeds) | 1st |
-| 30, 31, … | Roof Steel | 2nd |
-| 21, 22, … | Mezzanine Steel | 3rd |
-| 50, … | Elevator Steel | 4th |
-| 70, 71, … | Misc. / Stair Steel (interior, exterior) | 5th |
-
-That order is **erection order, not numeric order** — mezzanine steel goes up
-after roof steel, so `121` comes after `130` in the register. Sorting the
-sequence numbers would print the whole thing back to front.
-
-A code whose tens digit is not in the table sorts after everything named, in
-numeric order, and its band is left unlabelled rather than guessed at. A code
-that is in the table but not written down anywhere still lands correctly:
-`172` and `173` are not on the list above, but they are plainly 70s work and
-band with `170` and `171`.
-
-The worksheet nests the two:
-
-```
-ZONE 1   (Seq 172, 173)   -   56 drawing(s)
-    SEQ 172   -   Misc. / Stair Steel   -   42 drawing(s)
-    S.No │ Member Name │ Revision No
-       1 │ 17172C172   │ A
-    SEQ 173   -   Misc. / Stair Steel   -   14 drawing(s)
-       1 │ 17173C323   │ A
-ZONE 2   (Seq 270, 271)   -   51 drawing(s)
-    ...
-TOTAL   -   107 drawing(s)
-```
+Sequences run in **plain ascending order**. Two- and three-digit sequences are
+both understood and sort together, so `10` comes before `120` rather than after
+it — a package numbered "Seq 10-12, 120-139" comes out in that order.
 
 `S.No` restarts at 1 in **every sequence band**, because each band is a separate
-slice of work — "the third drawing of sequence 172" is the number worth
-printing. The counts live on the band headings, on the `TOTAL` row at the foot
-of each sheet, and in the **Drawings by Sequence** table on the Summary sheet,
-which adds every sequence up to the register total.
+slice of work. The counts live on the band headings, on the `TOTAL` row at the
+foot of each sheet, and in the **Drawings by Sequence** table on the Summary
+sheet, which adds every zone, sequence and category up to the register total.
 
-The steel-type table is editable — the numbering is a project convention, not a
-property of steel. Edit it on the web app's Extraction Settings tab, or set
-`sequence_groups` in `~/.fabdoc/settings.json`:
-
-```json
-"sequence_groups": [[1, "Perimeter Steel"], [3, "Roof Steel"],
-                    [2, "Mezzanine Steel"], [5, "Elevator Steel"],
-                    [7, "Misc. / Stair Steel"]]
-```
-
-The list order is the band order. Each row is `[tens digit, name]`.
-
-Sequences of two or three digits are both understood, so `17120B163` (seq 120)
-and `1710B84` (seq 10) both work — a two-digit sequence has no zone digit to
-strip, so `10` is code 10, perimeter steel.
-
-> **If you see a second table with no green band**, it is the rows whose marks did
+> **If you see a table with no green band**, those are the rows whose marks did
 > not match the sequence pattern, so no zone could be derived. Nothing is lost —
 > the counts still add up — but see [rule 6](#rule-6-if-a-second-unbanded-table-appears-fix-the-mark-pattern).
 

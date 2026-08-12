@@ -592,3 +592,39 @@ def test_comparison_report_sheets(tmp_path: Path):
     assert wb["Added"]["A2"].value == "17172C9"
     assert wb["Removed"]["A2"].value == "17172C3"
     wb.close()
+
+
+def test_a_superseded_default_pattern_is_migrated_on_load(tmp_path: Path):
+    """A fix in the shipped defaults must reach engineers who saved settings.
+
+    A saved profile holds a copy of every pattern, so the 3-digit sequence
+    pattern - a default nobody chose - kept shadowing its own fix. On the real
+    968-drawing package that silently dropped 245 rows out of their sequences.
+    """
+    import json
+    from fabdoc.config import ExtractionProfile, load_settings, save_settings, AppSettings
+
+    old = r"^(?P<job>\d{2})(?P<seq>\d{3})(?P<rest>[A-Za-z].*)$"
+    settings = AppSettings()
+    settings.profile.member_seq_pattern = old
+    path = tmp_path / "settings.json"
+    save_settings(settings, path)
+    assert json.loads(path.read_text(encoding="utf-8"))["profile"]["member_seq_pattern"] == old
+
+    loaded = load_settings(path)
+    assert loaded.profile.member_seq_pattern == ExtractionProfile().member_seq_pattern
+
+    from fabdoc.extract import parse_member_mark
+    assert parse_member_mark("1710B84", loaded.profile)[1] == "10"
+
+
+def test_a_pattern_the_engineer_tuned_is_never_overwritten(tmp_path: Path):
+    """Migration only replaces values identical to a superseded default."""
+    from fabdoc.config import load_settings, save_settings, AppSettings
+
+    mine = r"^(?P<job>\d{3})(?P<seq>\d{2})(?P<rest>[A-Za-z].*)$"
+    settings = AppSettings()
+    settings.profile.member_seq_pattern = mine
+    path = tmp_path / "settings.json"
+    save_settings(settings, path)
+    assert load_settings(path).profile.member_seq_pattern == mine

@@ -122,39 +122,28 @@ back to its drawing.
 ### Zones and sequences
 
 Many detailers encode the erection sequence into the member mark itself:
-`17172C172` is job `17`, sequence `172`, member `C172`. The sequence splits
-again — the **leading digit is the zone**, the **last two are the steel type**:
+`17172C172` is job `17`, sequence `172`, member `C172`. The leading digit of the
+sequence is the **zone**, so `270` is Zone 2.
+
+The worksheet nests zone, then sequence, in plain ascending order, with `S.No`
+restarting in each band and the counts carried on the headings:
 
 ```
-17 172 C172        zone 1,  code 72  ->  Misc. / Stair Steel
-17 130 B4          zone 1,  code 30  ->  Roof Steel
-17 271 X9          zone 2,  code 71  ->  Misc. / Stair Steel
-```
-
-Types group by the tens digit — 10s perimeter, 20s mezzanine, 30s roof, 50s
-elevator, 70s misc. and stair — and appear in **erection order, which is not
-numeric order**: mezzanine steel goes up after roof steel, so `121` bands after
-`130`.
-
-The worksheet nests zone, then sequence, with `S.No` restarting in each band and
-the counts carried on the headings:
-
-```
-ZONE 1   (Seq 172, 173)   -   56 drawing(s)
-    SEQ 172   -   Misc. / Stair Steel   -   42 drawing(s)
+ZONE 1   (Seq 10, 11, 12, 120 ... 139)   -   552 drawing(s)
+    SEQ 10    -   12 drawing(s)
     S.No | Member Name | Revision No
-      1  | 17172C172   |      A
-    SEQ 173   -   Misc. / Stair Steel   -   14 drawing(s)
-      1  | 17173C323   |      A
-ZONE 2   (Seq 270, 271)   -   51 drawing(s)
+      1  | 1710B84     |      0
+    SEQ 11    -   11 drawing(s)
     ...
-TOTAL   -   107 drawing(s)
+TOTAL   -   552 drawing(s)
 ```
 
-The Summary sheet adds every sequence up to the register total. The type table
-is `sequence_groups` in settings (a list of `[tens digit, name]`, in band order)
-and the mark pattern is `member_seq_pattern`; clear that to switch the whole
-thing off, or set `group_by_zone: false` for one flat table.
+Two- and three-digit sequences are both understood and sort together, so `10`
+comes before `120` rather than after it. The Summary sheet adds every zone,
+sequence and category up to the register total.
+
+The mark pattern is `member_seq_pattern` in settings; clear it to switch the
+whole thing off, or set `group_by_zone: false` for one flat table.
 
 ### Comparing two issues
 
@@ -192,9 +181,18 @@ The tracker has four sheets:
 | Sheet | What it answers |
 | --- | --- |
 | Tracker | One row per issue: stage, round, date, added / revised / removed / released / on hold |
-| Member History | Member down the side, issue across the top, revision in the cell |
+| History - *category* | Member down the side, issue across the top, revision in the cell. One sheet per drawing category, all in the same workbook |
 | Change Log | Every change, flattened, issue by issue |
 | On Hold | Approved members not yet released, and why |
+
+An assembly drawing and a single-part drawing routinely carry the **same mark**
+and are different deliverables — one is fabricated, the other is cut. They are
+tracked as separate items and given separate history sheets, but they stay in
+**one tracker workbook**, because they are one package with one chain.
+
+Point the tracker at an **existing file** to add the issue to that chain. That is
+how an IFF release finds the scope its IFA issue approved; a new file would start
+an empty history and report nothing as on hold.
 
 #### Fabrication releases: absent is not removed
 

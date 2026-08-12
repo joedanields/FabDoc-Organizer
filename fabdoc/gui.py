@@ -102,7 +102,7 @@ class HoldReasonDialog(tk.Toplevel):
         ttk.Button(batch, text="Apply to all", command=self._apply_all).pack(side="left")
         entry.focus_set()
 
-        cols = ("member", "zone", "rev", "since", "reason")
+        cols = ("member", "category", "zone", "rev", "since", "reason")
         tree_box = ttk.LabelFrame(
             frame, text="Select rows to give them a different reason", padding=4)
         tree_box.pack(fill="both", expand=True, pady=(PAD, 0))
@@ -110,10 +110,11 @@ class HoldReasonDialog(tk.Toplevel):
                                  selectmode="extended")
         for name, heading, width, anchor in [
             ("member", "Member Name", 150, "w"),
+            ("category", "Category", 90, "center"),
             ("zone", "Zone", 60, "center"),
             ("rev", "Approved Rev", 100, "center"),
-            ("since", "On Hold Since", 200, "w"),
-            ("reason", "Reason", 300, "w"),
+            ("since", "On Hold Since", 180, "w"),
+            ("reason", "Reason", 280, "w"),
         ]:
             self.tree.heading(name, text=heading)
             self.tree.column(name, width=width, anchor=anchor)
@@ -122,9 +123,11 @@ class HoldReasonDialog(tk.Toplevel):
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="left", fill="y")
         for hold in holds:
-            self.tree.insert("", "end", iid=hold.member_name, values=(
-                hold.member_name, hold.zone or "-", hold.revision or "-",
-                hold.held_since, hold.reason,
+            # The row id is the member identity, not the mark: an assembly and a
+            # single part can share a mark, and two rows cannot share an iid.
+            self.tree.insert("", "end", iid=hold.ident or hold.member_name, values=(
+                hold.member_name, hold.category or "-", hold.zone or "-",
+                hold.revision or "-", hold.held_since, hold.reason,
             ))
 
         sel = ttk.Frame(frame)
@@ -153,7 +156,7 @@ class HoldReasonDialog(tk.Toplevel):
 
     def _set_reason(self, iid: str, reason: str) -> None:
         values = list(self.tree.item(iid, "values"))
-        values[4] = reason
+        values[-1] = reason
         self.tree.item(iid, values=values)
 
     def _apply_all(self) -> None:
@@ -176,7 +179,7 @@ class HoldReasonDialog(tk.Toplevel):
     def _collected(self) -> dict[str, str]:
         out: dict[str, str] = {}
         for iid in self.tree.get_children():
-            reason = str(self.tree.item(iid, "values")[4]).strip()
+            reason = str(self.tree.item(iid, "values")[-1]).strip()
             if reason:
                 out[iid] = reason
         return out
@@ -930,8 +933,7 @@ class FabDocApp(ttk.Frame):
                     self._queue.put(("cancelled",))
                     return
                 path = write_register(reg, output,
-                                      include_source=settings.include_source_column,
-                                      sequence_groups=settings.sequence_groups)
+                                      include_source=settings.include_source_column)
                 self._queue.put(("done", reg, path))
             except Exception:
                 self._queue.put(("error", traceback.format_exc()))

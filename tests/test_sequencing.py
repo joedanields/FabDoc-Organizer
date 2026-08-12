@@ -1,10 +1,8 @@
 """Segregating a register by erection sequence.
 
-The sequence inside a member mark is two fields: the leading digit is the zone,
-the last two say what kind of steel it is. Those two digits group by their tens
-digit - the 10s are perimeter, the 30s roof, the 70s miscellaneous and stair
-steel - and the order those groups appear in is the order the steel is erected,
-which is not the order the numbers sort in.
+The sequence inside a member mark carries the zone in its leading digit, and the
+register is split by the whole sequence number inside each zone. Sequences run
+in plain ascending order, and a band says only which sequence it is.
 """
 
 from __future__ import annotations
@@ -26,96 +24,36 @@ from fabdoc.register import build_register, sort_records       # noqa: E402
 from fabdoc.register_io import read_register                   # noqa: E402
 
 
-# --------------------------------------------------------------- the code
+# --------------------------------------------------------------- ordering
 
 
-@pytest.mark.parametrize("seq,code", [
-    ("172", "72"),      # zone 1, misc/stair
-    ("270", "70"),      # zone 2, interior misc
-    ("110", "10"),      # zone 1, anchor bolts
-    ("341", "41"),
-    # A two-digit sequence has no zone digit to strip. One package mixes both
-    # widths, and "10" is perimeter steel in the same register as "130".
-    ("10", "10"),
-    ("11", "11"),
-    ("", ""),
-    ("abc", ""),
-])
-def test_the_code_is_the_last_two_digits(seq: str, code: str):
-    assert sq.sequence_code(seq) == code
+def test_sequences_sort_numerically_not_as_text():
+    """A package mixes two- and three-digit sequences in one register.
 
-
-@pytest.mark.parametrize("seq,name", [
-    ("110", "Perimeter Steel"),
-    ("210", "Perimeter Steel"),     # same steel, different zone
-    ("111", "Perimeter Steel"),
-    ("130", "Roof Steel"),
-    ("121", "Mezzanine Steel"),
-    ("150", "Elevator Steel"),
-    ("170", "Misc. / Stair Steel"),
-    ("171", "Misc. / Stair Steel"),
-])
-def test_listed_codes_land_in_their_group(seq: str, name: str):
-    assert sq.group_for(seq)[1] == name
-
-
-@pytest.mark.parametrize("seq", ["172", "173", "179"])
-def test_an_unlisted_code_follows_its_decade(seq: str):
-    """72 and 73 are written down nowhere but are plainly 70s work.
-
-    They are 56 of the sample package's 107 drawings. Falling back to the
-    decade is what keeps them beside 70 and 71 instead of in a nameless heap.
+    Sorted as text "10" lands after "120", which puts the first sequence
+    erected at the bottom of the sheet.
     """
-    rank, name = sq.group_for(seq)
-    assert name == "Misc. / Stair Steel"
-    assert rank == sq.group_for("170")[0]
-
-
-def test_a_decade_nobody_listed_sorts_last_and_is_not_named():
-    """Cooling tower steel (341) fits no group. Guessing a name would be worse."""
-    rank, name = sq.group_for("341")
-    assert rank == sq.UNKNOWN_RANK
-    assert name == ""
-    assert sq.label_for("341") == "SEQ 341"
-
-
-def test_the_group_order_is_erection_order_not_numeric():
-    """Mezzanine (20s) is erected after roof (30s).
-
-    Sorting the sequence numbers would put mezzanine before roof and print the
-    register in an order the shop cannot work to.
-    """
-    seqs = ["171", "170", "121", "130", "111", "150", "110", "131", "122"]
+    seqs = ["130", "10", "12", "120", "11", "139", "129", "172"]
     assert sorted(seqs, key=sq.sort_key) == [
-        "110", "111",          # 1. Perimeter
-        "130", "131",          # 2. Roof
-        "121", "122",          # 3. Mezzanine
-        "150",                 # 4. Elevator
-        "170", "171",          # 5. Misc. / Stair
+        "10", "11", "12", "120", "129", "130", "139", "172",
     ]
 
 
-def test_unlisted_decades_sort_after_every_named_group():
-    assert sorted(["341", "170", "110"], key=sq.sort_key) == ["110", "170", "341"]
+def test_a_missing_sequence_sorts_last_without_raising():
+    assert sorted(["172", "", "10"], key=sq.sort_key) == ["10", "172", ""]
+    assert sorted(["172", "n/a"], key=sq.sort_key) == ["172", "n/a"]
 
 
-def test_the_table_is_editable_because_the_numbering_is_a_convention():
-    """A different project can renumber its steel without a code change."""
-    groups = [[7, "Stairs First"], [1, "Perimeter Last"]]
-    assert sq.group_for("172", groups)[1] == "Stairs First"
-    assert sorted(["110", "172"], key=lambda s: sq.sort_key(s, groups)) == ["172", "110"]
-
-
-def test_a_malformed_table_row_does_not_raise():
-    """Settings are hand-editable JSON, so half a row must not kill a run."""
-    for broken in ([["oops", "Bad"]], [[]], [[None, None]], []):
-        assert sq.group_for("172", broken) == (sq.UNKNOWN_RANK, "")
+def test_the_band_says_only_the_sequence():
+    assert sq.label_for("130") == "SEQ 130"
+    assert sq.label_for("10") == "SEQ 10"
+    assert sq.label_for("") == "NO SEQUENCE"
 
 
 # ------------------------------------------------------------- the register
 
 
-def test_records_sort_into_erection_order_within_a_zone():
+def test_records_sort_by_zone_then_sequence():
     records = [
         DrawingRecord(member_name="17170A1", zone="1", seq_group="170"),
         DrawingRecord(member_name="17110A1", zone="1", seq_group="110"),
@@ -124,7 +62,7 @@ def test_records_sort_into_erection_order_within_a_zone():
         DrawingRecord(member_name="17210A1", zone="2", seq_group="210"),
     ]
     assert [r.member_name for r in sort_records(records)] == [
-        "17110A1", "17130A1", "17121A1", "17170A1",   # zone 1, erection order
+        "17110A1", "17121A1", "17130A1", "17170A1",   # zone 1, ascending
         "17210A1",                                     # zone 2
     ]
 
@@ -136,7 +74,6 @@ def test_a_zone_is_split_into_its_sequences(tmp_path: Path):
     cat = build_register(root).categories[0]
 
     clusters = cat.sequence_groups("1")
-    # Roof steel first, then the two misc./stair sequences in code order.
     assert [seq for seq, _ in clusters] == ["130", "172", "173"]
     assert [len(recs) for _, recs in clusters] == [1, 2, 1]
     assert sum(len(r) for _, r in clusters) == cat.total
@@ -177,10 +114,8 @@ def banded(tmp_path: Path) -> Path:
     root = tmp_path / "Stairs at Zone 1 and Zone 2 - 2026-07-06"
     for mark in ["17172C1", "17172C2", "17173R1", "17270S1", "17271X1", "17271X2"]:
         make_drawing(root / "Assembly" / f"{mark}  - Rev A.pdf", mark, revision="A")
-    settings = AppSettings()
-    return write_register(build_register(root, settings=settings),
-                          tmp_path / "banded.xlsx",
-                          sequence_groups=settings.sequence_groups)
+    return write_register(build_register(root, settings=AppSettings()),
+                          tmp_path / "banded.xlsx")
 
 
 def test_the_sheet_bands_each_sequence_inside_its_zone(banded: Path):
@@ -188,11 +123,11 @@ def test_the_sheet_bands_each_sequence_inside_its_zone(banded: Path):
     bands = [t for t in first if t.startswith(("ZONE", "    SEQ", "TOTAL"))]
     assert bands == [
         "ZONE 1   (Seq 172, 173)   -   3 drawing(s)",
-        "    SEQ 172   -   Misc. / Stair Steel   -   2 drawing(s)",
-        "    SEQ 173   -   Misc. / Stair Steel   -   1 drawing(s)",
+        "    SEQ 172   -   2 drawing(s)",
+        "    SEQ 173   -   1 drawing(s)",
         "ZONE 2   (Seq 270, 271)   -   3 drawing(s)",
-        "    SEQ 270   -   Misc. / Stair Steel   -   1 drawing(s)",
-        "    SEQ 271   -   Misc. / Stair Steel   -   2 drawing(s)",
+        "    SEQ 270   -   1 drawing(s)",
+        "    SEQ 271   -   2 drawing(s)",
         "TOTAL   -   6 drawing(s)",
     ]
 
@@ -224,10 +159,10 @@ def test_the_summary_breaks_the_total_down_by_sequence(banded: Path):
 
     body = [r[:4] for r in table if r[0] != "TOTAL"]
     assert body == [
-        ["1", "172", "Misc. / Stair Steel", 2],
-        ["1", "173", "Misc. / Stair Steel", 1],
-        ["2", "270", "Misc. / Stair Steel", 1],
-        ["2", "271", "Misc. / Stair Steel", 2],
+        ["1", "172", "Assembly", 2],
+        ["1", "173", "Assembly", 1],
+        ["2", "270", "Assembly", 1],
+        ["2", "271", "Assembly", 2],
     ]
     total = next(r for r in table if r[0] == "TOTAL")
     assert total[3] == sum(r[3] for r in body) == 6

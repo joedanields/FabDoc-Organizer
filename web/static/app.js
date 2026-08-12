@@ -232,8 +232,14 @@ function applyScan(data) {
 
   $("out-folder").value = data.output.folder || "";
   $("out-name").value = data.output.name || "";
-  $("track-folder").value = data.output.tracker_folder || "";
-  $("track-name").value = data.output.tracker_name || "";
+  // A tracker already chosen is left alone. The suggested name is derived from
+  // this issue's folder title, and every issue of a package titles itself
+  // differently ("for Approval", then "for Fabrication") - overwriting the
+  // field is how a release ends up in a second tracker with no approved
+  // baseline, silently reporting nothing as on hold.
+  if (!$("track-folder").value) $("track-folder").value = data.output.tracker_folder || "";
+  if (!$("track-name").value) $("track-name").value = data.output.tracker_name || "";
+  describeTracker();
 
   const body = $("cats").querySelector("tbody");
   body.innerHTML = data.categories.map((c) => `
@@ -308,6 +314,37 @@ $("scan").onclick = async () => {
     $("scan").disabled = false;
   }
 };
+
+/* --------------------------------------------------- existing tracker */
+
+async function describeTracker() {
+  const el = $("track-info");
+  const folder = LOCAL ? $("track-folder").value.trim() : "";
+  const name = $("track-name").value.trim();
+  if (!name) { status(el, ""); return; }
+  const path = folder ? join(folder, name) : name;
+  try {
+    const d = await send("/api/tracker/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (d.tracked) {
+      status(el, `Adding to "${d.project}" - ${d.issues} issue(s) already tracked` +
+        (d.last ? `, last: ${d.last}` : "") + ".", "good");
+    } else if (d.exists) {
+      status(el, "That file exists but has no chain beside it - it will be replaced.",
+        "bad");
+    } else {
+      status(el, "New tracker - this issue starts the chain.");
+    }
+  } catch {
+    status(el, "");
+  }
+}
+
+$("track-folder").onchange = describeTracker;
+$("track-name").onchange = describeTracker;
 
 $("cat-all").onclick = () =>
   document.querySelectorAll(".cat").forEach((c) => (c.checked = true));
@@ -480,9 +517,10 @@ function openHolds(holds) {
 
   const body = $("hold-table").querySelector("tbody");
   body.innerHTML = holds.members.map((m) => `
-    <tr data-member="${esc(m.member)}">
+    <tr data-member="${esc(m.id || m.member)}">
       <td><input type="checkbox" class="holdsel"></td>
       <td>${esc(m.member)}</td>
+      <td class="num">${esc(m.category || "-")}</td>
       <td class="num">${esc(m.zone || "-")}</td>
       <td class="num">${esc(m.revision || "-")}</td>
       <td>${esc(m.since)}</td>
@@ -585,7 +623,8 @@ async function showTracker(name) {
   const held = data.holds.filter((h) => !h.released);
   const holdRows = held.map((h) => `
     <tr class="${h.reason ? "row-hold" : "row-warn"}">
-      <td>${esc(h.member)}</td><td class="num">${esc(h.zone)}</td>
+      <td>${esc(h.member)}</td><td class="num">${esc(h.category || "-")}</td>
+      <td class="num">${esc(h.zone)}</td>
       <td class="num">${esc(h.revision)}</td><td>${esc(h.since)}</td>
       <td>${esc(h.reason) || "<em>no reason recorded</em>"}</td>
     </tr>`).join("");
@@ -886,21 +925,6 @@ function applySettings(s) {
   $("s-zone").checked = !!s.group_by_zone;
   $("s-outdir").value = s.default_output_folder || "";
   $("s-trackdir").value = s.default_tracker_folder || "";
-  $("p-seqgroups").value = (s.sequence_groups || [])
-    .map(([digit, name]) => `${digit} = ${name}`).join("\n");
-}
-
-/* "7 = Misc. / Stair Steel" per line. Line order is erection order, so the
-   list is kept as typed rather than sorted. */
-function collectSequenceGroups() {
-  return $("p-seqgroups").value.split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const at = line.indexOf("=");
-      if (at < 0) throw new Error(`"${line}" needs the form: digit = name`);
-      return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
-    });
 }
 
 function collectProfile() {
@@ -932,20 +956,12 @@ $("save-settings").onclick = async () => {
     status($("s-status"), "The title block region must be four numbers.", "bad");
     return;
   }
-  let sequenceGroups;
-  try {
-    sequenceGroups = collectSequenceGroups();
-  } catch (err) {
-    status($("s-status"), err.message, "bad");
-    return;
-  }
   try {
     const d = await send("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         profile: collectProfile(),
-        sequence_groups: sequenceGroups,
         day_first_dates: $("s-daryfirst").checked,
         include_source_column: $("s-source").checked,
         group_by_zone: $("s-zone").checked,

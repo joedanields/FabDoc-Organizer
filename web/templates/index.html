@@ -112,13 +112,17 @@
       <label class="grow">Tracker file <input type="text" id="track-name"></label>
       <button id="open-tracker" class="local-only" disabled>Open tracker</button>
     </div>
+    <div id="track-info" class="status"></div>
     <label class="inline local-only"><input type="checkbox" id="track-default">
       Remember this as the default tracker folder</label>
     <p class="hint">IFA = issued for approval, IFF = issued for fabrication. The
        stage is never guessed from the folder name: an approval issue mistaken
        for a fabrication release would rewrite the approved baseline and report
-       the rest of the package as unshipped. An existing tracker is added to,
-       never replaced.</p>
+       the rest of the package as unshipped.</p>
+    <p class="hint">Point this at an <strong>existing tracker</strong> to add the issue
+       to that chain - that is how an IFF release finds the scope its IFA issue
+       approved. A tracker is only ever added to, never replaced, and the field
+       is not overwritten when you scan the next folder.</p>
   </fieldset>
 
   <div class="actions" id="run-box" hidden>
@@ -264,16 +268,6 @@
       <fieldset><legend>Filename fallback patterns (groups: seq, member, rev)</legend>
         <textarea id="p-filename" rows="5" spellcheck="false"></textarea></fieldset>
 
-      <fieldset><legend>Steel types, in erection order</legend>
-        <p class="hint">One per line as <code>digit = name</code>, where the digit is
-           the tens of the sequence code &mdash; sequence 172 is zone 1, code 72,
-           so it is a <code>7</code>. The order of the lines is the order the
-           bands appear in the register, which is <em>not</em> the numeric order:
-           mezzanine steel is erected after roof steel. A code whose digit is not
-           listed sorts after everything here and is left unnamed.</p>
-        <textarea id="p-seqgroups" rows="6" spellcheck="false"></textarea>
-      </fieldset>
-
       <fieldset><legend>Title block region (page fractions, 0&ndash;1)</legend>
         <div class="pathrow rect">
           <label>left <input type="text" id="r-left" size="5"></label>
@@ -348,7 +342,8 @@
     </div>
     <div class="tablewrap">
       <table id="hold-table"><thead><tr>
-        <th></th><th>Member</th><th>Zone</th><th>Rev</th><th>On hold since</th><th>Reason</th>
+        <th></th><th>Member</th><th>Category</th><th>Zone</th><th>Rev</th>
+        <th>On hold since</th><th>Reason</th>
       </tr></thead><tbody></tbody></table>
     </div>
     <div class="modal-actions">

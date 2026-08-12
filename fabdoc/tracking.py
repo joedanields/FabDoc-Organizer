@@ -75,17 +75,44 @@ def project_name_from(title: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+MEMBER_SEP = "::"
+
+
+def member_id(category: str, name: str) -> str:
+    """Identity of one tracked item: its category and its mark.
+
+    An assembly drawing and a single-part drawing can carry the same mark and
+    are different deliverables - the assembly is fabricated, the part is cut.
+    Keyed by mark alone the two collapse into one entry, so whichever was read
+    second silently overwrote the first and the release counts were wrong.
+    """
+    category = (category or "").strip()
+    return f"{category}{MEMBER_SEP}{name}" if category else name
+
+
+def split_member_id(ident: str) -> tuple[str, str]:
+    """``("Assembly", "17130B103")``. Category is empty for an untagged id."""
+    if MEMBER_SEP in ident:
+        category, _, name = ident.partition(MEMBER_SEP)
+        return category, name
+    return "", ident
+
+
 def snapshot_register(register: Register) -> "OrderedDict[str, dict[str, str]]":
-    """Reduce a register to the member data the chain needs, keyed by mark.
+    """Reduce a register to the member data the chain needs.
 
     Storing this rather than the register itself is what lets the tracker rebuild
     the whole history without re-scanning thousands of PDFs.
     """
     out: "OrderedDict[str, dict[str, str]]" = OrderedDict()
     for rec in register.all_records():
-        if not rec.member_name or rec.member_name in out:
+        if not rec.member_name:
             continue
-        out[rec.member_name] = {
+        ident = member_id(rec.category, rec.member_name)
+        if ident in out:
+            continue
+        out[ident] = {
+            "name": rec.member_name,
             "rev": rec.revision,
             "zone": rec.zone,
             "category": rec.category,
@@ -103,6 +130,24 @@ class IssueEntry:
     date_text: str = ""
     folder: str = ""
     members: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
+
+    def __post_init__(self) -> None:
+        """Re-key members to their canonical id.
+
+        The category recorded against a member is the authority, not whatever
+        the caller happened to key the dict by. Without this an entry built in
+        memory and the same entry read back from disk hash differently, so a
+        chain compared before saving and after reloading gave different answers.
+        """
+        canonical: "OrderedDict[str, dict[str, str]]" = OrderedDict()
+        for ident, info in self.members.items():
+            category = info.get("category") or split_member_id(ident)[0]
+            name = info.get("name") or split_member_id(ident)[1]
+            info = dict(info)
+            info["name"] = name
+            info["category"] = category
+            canonical[member_id(category, name)] = info
+        self.members = canonical
 
     @property
     def total(self) -> int:
@@ -129,8 +174,14 @@ class IssueEntry:
             date_text=data.get("date_text", ""),
             folder=data.get("folder", ""),
         )
-        for name, info in (data.get("members") or {}).items():
-            entry.members[name] = dict(info)
+        # Chains written before members were scoped by category are keyed by the
+        # bare mark. The category was already stored alongside, so __post_init__
+        # rebuilds the identity exactly rather than guessing it.
+        for key, info in (data.get("members") or {}).items():
+            info = dict(info)
+            info.setdefault("name", split_member_id(key)[1])
+            entry.members[key] = info
+        entry.__post_init__()
         return entry
 
 
@@ -144,6 +195,9 @@ class HoldRecord:
     """An approved member that has not shipped yet."""
 
     member_name: str
+    category: str = ""              # Assembly, Part - the same mark can be both
+    ident: str = ""                 # "Assembly::17130B103", as the history keys it
+    member_key: str = ""            # comparison key, for recording the reason
     zone: str = ""
     revision: str = ""              # revision at the approved baseline
     reason: str = ""
@@ -301,12 +355,20 @@ def save_state(state: ChainState, path: str | Path) -> Path:
 
 
 def _keys(entry: IssueEntry, cfg: AppSettings) -> "OrderedDict[str, str]":
-    """Comparison key -> original mark, for one issue."""
+    """Comparison key -> member id, for one issue.
+
+    The key carries the category, so a part and an assembly of the same mark are
+    compared as the two separate deliverables they are.
+    """
     out: "OrderedDict[str, str]" = OrderedDict()
-    for name in entry.members:
-        key = normalise(name, cfg)
-        if key and key not in out:
-            out[key] = name
+    for ident, info in entry.members.items():
+        category = info.get("category") or split_member_id(ident)[0]
+        key = normalise(info.get("name") or split_member_id(ident)[1], cfg)
+        if not key:
+            continue
+        key = member_id(category, key)
+        if key not in out:
+            out[key] = ident
     return out
 
 
@@ -370,7 +432,10 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
                     continue
                 if hold is None:
                     hold = HoldRecord(
-                        member_name=mark,
+                        member_name=info.get("name") or split_member_id(mark)[1],
+                        category=info.get("category", ""),
+                        ident=mark,
+                        member_key=key,
                         zone=info.get("zone", ""),
                         revision=info.get("rev", ""),
                         held_since=entry.label,
@@ -409,13 +474,16 @@ def apply_reasons(state: ChainState, reasons: dict[str, str],
                   settings: AppSettings | None = None) -> None:
     """Record hold reasons against their comparison keys.
 
-    Keys may be given as either the member mark or an already-normalised key, so
-    a caller can pass straight back what a dialog collected.
+    A key may arrive as the member mark, as a category-scoped id
+    ("Assembly::17130B103"), or already normalised, so a caller can pass
+    straight back whatever a dialog collected.
     """
     cfg = settings or AppSettings()
-    for name, reason in reasons.items():
+    for raw, reason in reasons.items():
         if not reason or not reason.strip():
             continue
+        category, name = split_member_id(raw)
         key = normalise(name, cfg)
-        if key:
-            state.hold_reasons[key] = reason.strip()
+        if not key:
+            continue
+        state.hold_reasons[member_id(category, key)] = reason.strip()

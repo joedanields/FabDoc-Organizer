@@ -14,8 +14,6 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-from .sequencing import DEFAULT_SEQUENCE_GROUPS
-
 # ---------------------------------------------------------------------------
 # Drawing categories
 # ---------------------------------------------------------------------------
@@ -197,13 +195,6 @@ class AppSettings:
     # under a banded sequence header, restarting S.No per sequence.
     group_by_zone: bool = True
 
-    # Steel types in erection order, keyed by the tens digit of the sequence
-    # code (see fabdoc.sequencing). Editable because the numbering is a project
-    # convention, not a property of steel.
-    sequence_groups: list[list] = field(
-        default_factory=lambda: [list(g) for g in DEFAULT_SEQUENCE_GROUPS]
-    )
-
     # Default output folder for generated registers (empty = project folder)
     default_output_folder: str = ""
 
@@ -223,7 +214,6 @@ class AppSettings:
             "compare_strip_leading_zeros": self.compare_strip_leading_zeros,
             "include_source_column": self.include_source_column,
             "group_by_zone": self.group_by_zone,
-            "sequence_groups": self.sequence_groups,
             "default_output_folder": self.default_output_folder,
             "default_tracker_folder": self.default_tracker_folder,
         }
@@ -237,8 +227,7 @@ class AppSettings:
             "category_aliases", "category_order", "day_first_dates",
             "compare_case_insensitive", "compare_ignore_whitespace",
             "compare_strip_leading_zeros", "include_source_column",
-            "group_by_zone", "sequence_groups", "default_output_folder",
-            "default_tracker_folder",
+            "group_by_zone", "default_output_folder", "default_tracker_folder",
         ):
             if key in data:
                 setattr(s, key, data[key])
@@ -251,13 +240,47 @@ def default_settings_path() -> Path:
     return base / "settings.json"
 
 
+# Defaults that shipped in an earlier version and were later corrected. A saved
+# profile holds a full copy of every pattern, so a value the engineer never
+# chose - it was simply the default the day they first pressed Save - would
+# otherwise shadow the fix for the life of the install.
+#
+# The 3-digit sequence pattern is the one that made this worth doing: it matched
+# nothing on a 2-digit sequence, so a package numbered "Seq 10-12, 120-139" lost
+# every drawing in sequences 10, 11 and 12 to an unbanded table at the foot of
+# the sheet - 245 rows of a 968-row register, on a fix that had already shipped.
+SUPERSEDED_DEFAULTS: dict[str, list[str]] = {
+    "member_seq_pattern": [
+        r"^(?P<job>\d{2})(?P<seq>\d{3})(?P<rest>[A-Za-z].*)$",
+    ],
+}
+
+
+def migrate_profile(data: dict[str, Any]) -> list[str]:
+    """Replace superseded defaults in a saved profile. Returns what changed.
+
+    Only values identical to a previous default are touched. Anything the
+    engineer actually tuned is left exactly as they wrote it.
+    """
+    fresh = ExtractionProfile()
+    changed: list[str] = []
+    for key, old_defaults in SUPERSEDED_DEFAULTS.items():
+        if data.get(key) in old_defaults and data.get(key) != getattr(fresh, key):
+            data[key] = getattr(fresh, key)
+            changed.append(key)
+    return changed
+
+
 def load_settings(path: Path | None = None) -> AppSettings:
     """Load settings, returning defaults if the file is absent or unreadable."""
     p = path or default_settings_path()
     try:
         with open(p, "r", encoding="utf-8") as fh:
-            return AppSettings.from_dict(json.load(fh))
-    except (OSError, ValueError, TypeError):
+            data = json.load(fh)
+        if isinstance(data.get("profile"), dict):
+            migrate_profile(data["profile"])
+        return AppSettings.from_dict(data)
+    except (OSError, ValueError, TypeError, AttributeError):
         return AppSettings()
 
 
