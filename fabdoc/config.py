@@ -57,8 +57,12 @@ class ExtractionProfile:
     # --- Member name / mark -------------------------------------------------
     member_patterns: list[str] = field(
         default_factory=lambda: [
-            r"(?:ASSEMBLY|ASSY)\s*(?:MARK|MK|No\.?|NUMBER|ID|REF|POS(?:ITION)?)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
-            r"(?:MEMBER)\s*(?:MARK|MK|NAME|No\.?|NUMBER|ID|REF|POS(?:ITION)?)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            # A qualifier word or a separator is required. With both optional
+            # the bare noun matched - "In Assembly" is a column heading on a
+            # single-part title block, and the capture fell onto the material
+            # cell beside it.
+            r"(?:ASSEMBLY|ASSY)\s*(?:(?:MARK|MK|No\.?|NUMBER|#|ID|REF|POS(?:ITION)?)\s*[:\-#]?|[:\-])\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:MEMBER)\s*(?:(?:MARK|MK|NAME|No\.?|NUMBER|#|ID|REF|POS(?:ITION)?)\s*[:\-#]?|[:\-])\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
             r"(?:PIECE|PART)\s*(?:MARK|MK|No\.?|NUMBER|ID|REF|POS(?:ITION)?)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
             r"\bMARK\s*[:\-]\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
             r"(?:DRAWING|DRG|DWG)\s*(?:No\.?|NUMBER|NAME)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
@@ -112,6 +116,27 @@ class ExtractionProfile:
     # words like "DETAIL" or "SECTION" are rejected.
     member_shape_pattern: str = r"^(?=.*\d)[A-Z0-9][A-Z0-9._/\-]{1,19}$"
 
+    # Shapes that are never a member mark, whatever matched them. Applied to
+    # labelled captures as well as to the largest-text fallback.
+    #
+    # Single-part drawings are what made this necessary. Their title block is a
+    # column table - "Part #", "Qty", "In Assembly", "Material" as headings with
+    # the values on the row below - so a same-line label pattern matches the
+    # heading "In Assembly" and captures the material beside it. 121 of 125 part
+    # drawings came out named after a steel section or a length: HSS4X4X1/2,
+    # PIPE1-1/2SCH40, 29.00, 134/. None of those is a mark, and rejecting them
+    # lets the cascade fall through to the largest text in the title block,
+    # which is the mark on every one of those drawings.
+    member_reject_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"[/.]$",                       # a cut fraction: "12/", "134/"
+            r"\d\s*[Xx]\s*\d",              # a section size: C12X25, HSS4X4X1/2
+            r"^\d+\.\d+$",                  # a length: 29.00, 58.19
+            r"SCH\d",                       # a pipe schedule: PIPE1-1/2SCH40
+            r"^(?:PIPE|PL|HSS|TS|WT|MC)\d",  # a profile designation
+        ]
+    )
+
     # Words that must never be accepted as a member name, whatever matches.
     # The second row is label vocabulary: an unrecognised qualifier after a
     # label ("MEMBER ID : B-101") would otherwise be captured as the mark.
@@ -122,6 +147,10 @@ class ExtractionProfile:
             "DETAIL", "SECTION", "NOTES", "TOTAL", "WEIGHT", "GRADE", "QTY",
             "ID", "NO", "NO.", "NUMBER", "NAME", "MARK", "MK", "POS", "POSITION",
             "REF", "TYPE", "ITEM", "DESC", "DESCRIPTION", "OF", "SIZE", "UNIT",
+            # Column headings on a single-part title block, which a same-line
+            # label pattern will otherwise capture as the mark.
+            "PART", "PARTS", "ASSEMBLY", "ASSY", "MATERIAL", "LENGTH", "JOB",
+            "QUANTITY", "PIECE", "MEMBER", "DRAWN", "SHEETS",
         ]
     )
 

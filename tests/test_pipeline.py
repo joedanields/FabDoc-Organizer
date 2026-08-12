@@ -16,8 +16,8 @@ from fabdoc.config import AppSettings, ExtractionProfile
 from fabdoc.compare import compare_issues
 from fabdoc.excel_out import (suggest_register_name, write_comparison_report,
                               write_register, write_validation_report)
-from fabdoc.extract import (SOURCE_FILENAME, SOURCE_LARGEST, extract_drawing,
-                            parse_member_mark)
+from fabdoc.extract import (SOURCE_FILENAME, SOURCE_LARGEST, SOURCE_TITLEBLOCK,
+                            extract_drawing, parse_member_mark)
 from fabdoc.folder_meta import parse_folder_name
 from fabdoc.memberlist import read_member_list
 from fabdoc.register import build_register, sort_records
@@ -628,3 +628,73 @@ def test_a_pattern_the_engineer_tuned_is_never_overwritten(tmp_path: Path):
     path = tmp_path / "settings.json"
     save_settings(settings, path)
     assert load_settings(path).profile.member_seq_pattern == mine
+
+
+# ------------------------------------------------- single-part title blocks
+
+
+def _part_titleblock(path: Path, mark: str, material: str,
+                     length: str = "0'-11\"") -> Path:
+    """A single-part title block: column headings with values on another row.
+
+    Nothing here is on the same line as its heading, which is what breaks a
+    same-line label pattern. The mark is the largest text in the block, exactly
+    as the real drawings present it.
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=792, height=612)
+    page.insert_text((672, 568), "Part #", fontsize=9)
+    page.insert_text((672, 578), mark, fontsize=13.5)      # the real mark
+    page.insert_text((671, 481), "Qty", fontsize=9)
+    page.insert_text((715, 481), "In Assembly", fontsize=9)
+    page.insert_text((671, 465), "1", fontsize=9)
+    page.insert_text((715, 465), material, fontsize=9)     # the trap
+    page.insert_text((533, 552), "Material", fontsize=9)
+    page.insert_text((625, 552), "Length", fontsize=9)
+    page.insert_text((625, 565), length, fontsize=9)
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.mark.parametrize("material", [
+    "HSS4X4X1/2",        # a section size
+    "C12X25",
+    "PIPE1-1/2SCH40",
+    "PL1/2",
+    "15/16",             # a fraction off a dimension
+    "29.00",             # a length
+    "CENTERLINE",        # a note with no digits at all
+])
+def test_a_part_mark_is_not_confused_with_its_material(tmp_path: Path, material: str):
+    """"In Assembly" is a column heading, not a label introducing a value.
+
+    It matched the ASSEMBLY pattern and the capture fell onto the cell beside
+    it, so 121 of 125 single-part drawings came out named after a steel section
+    or a length - and none was flagged, because a labelled capture counts as
+    confident.
+    """
+    pdf = _part_titleblock(tmp_path / f"{material.replace('/', '~')}.pdf",
+                           "17172C250", material)
+    rec = extract_drawing(pdf, category="Part")
+    assert rec.member_name == "17172C250", f"captured {rec.member_name!r} instead"
+
+
+def test_a_genuine_assembly_label_still_wins(tmp_path: Path):
+    """The fix must not cost the templates that do label their marks."""
+    pdf = make_drawing(tmp_path / "labelled.pdf", "C-101", revision=2, seq=7)
+    rec = extract_drawing(pdf)
+    assert rec.member_name == "C-101"
+    assert rec.member_source == SOURCE_TITLEBLOCK
+
+
+@pytest.mark.parametrize("wording", ["ASSEMBLY MARK", "ASSEMBLY No", "ASSEMBLY REF",
+                                     "MEMBER NAME", "MEMBER ID"])
+def test_labels_still_match_with_a_qualifier_or_separator(tmp_path: Path, wording: str):
+    pdf = tmp_path / f"{wording.replace(' ', '_')}.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=842, height=595)
+    page.insert_text((520, 430), f"{wording} : B-101", fontsize=11)
+    doc.save(pdf)
+    doc.close()
+    assert extract_drawing(pdf).member_name == "B-101"

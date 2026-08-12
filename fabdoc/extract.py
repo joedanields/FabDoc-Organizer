@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 try:
     import fitz  # PyMuPDF
@@ -95,12 +96,18 @@ def _compile(patterns: list[str]) -> list[re.Pattern[str]]:
     return out
 
 
-def _first_match(text: str, patterns: list[re.Pattern[str]]) -> str:
+def _first_match(text: str, patterns: list[re.Pattern[str]],
+                 accept: "Callable[[str], bool] | None" = None) -> str:
+    """The first captured value, skipping any the caller will not accept.
+
+    Without ``accept`` the first match wins outright, which is what let a label
+    pattern matching a table heading claim the row. Skipping a rejected capture
+    and trying the next pattern is what lets a better tier answer instead.
+    """
     for pattern in patterns:
-        match = pattern.search(text)
-        if match:
+        for match in pattern.finditer(text):
             value = (match.group(1) if match.groups() else match.group(0)).strip()
-            if value:
+            if value and (accept is None or accept(value)):
                 return value
     return ""
 
@@ -147,6 +154,21 @@ def _largest_mark(
 
 def _reject_stopword(value: str, stopwords: set[str]) -> str:
     return "" if value.upper() in stopwords else value
+
+
+def _is_mark(value: str, shape: re.Pattern[str], stopwords: set[str],
+             rejects: list[re.Pattern[str]]) -> bool:
+    """Could this token be a member mark at all?
+
+    The largest-text tier has always applied the shape test; the labelled tiers
+    did not, so a capture like "HSS4X4X1/2" off a material column, or the word
+    "CENTERLINE" off a dimension note, was taken as the mark and no later tier
+    ever ran.
+    """
+    text = value.strip().upper()
+    if not text or text in stopwords or not shape.match(text):
+        return False
+    return not any(r.search(text) for r in rejects)
 
 
 def parse_member_mark(mark: str, profile: ExtractionProfile | None = None
@@ -231,10 +253,14 @@ def extract_drawing(
     rev_pats = _compile(prof.revision_patterns)
     seq_pats = _compile(prof.sequence_patterns)
     stopwords = {w.upper() for w in prof.member_stopwords}
+    rejects = _compile(prof.member_reject_patterns)
     try:
         shape = re.compile(prof.member_shape_pattern)
     except re.error:
         shape = re.compile(r"^(?=.*\d)[A-Z0-9][A-Z0-9._/\-]{1,19}$")
+
+    def acceptable(value: str) -> bool:
+        return _is_mark(value, shape, stopwords, rejects)
 
     page_text, block_text = "", ""
     try:
@@ -261,13 +287,12 @@ def extract_drawing(
                     ("revision", rev_pats, "revision", "revision_source"),
                     ("seq", seq_pats, "seq_no", "seq_source"),
                 ):
-                    value = _first_match(block_text, pats)
+                    accept = acceptable if label == "member" else None
+                    value = _first_match(block_text, pats, accept)
                     source = SOURCE_TITLEBLOCK
                     if not value:
-                        value = _first_match(page_text, pats)
+                        value = _first_match(page_text, pats, accept)
                         source = SOURCE_PAGE
-                    if label == "member":
-                        value = _reject_stopword(value, stopwords)
                     if value:
                         clean = _tidy_seq(value) if label == "seq" else value.strip().upper()
                         setattr(record, attr, clean)
