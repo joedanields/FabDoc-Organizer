@@ -52,6 +52,8 @@ class DrawingRecord:
     job_no: str = ""
     seq_group: str = ""
     zone: str = ""
+    # A single part carries a type instead of a sequence: "17ch104" -> CH.
+    type_code: str = ""
 
     seq_source: str = SOURCE_NONE
     member_source: str = SOURCE_NONE
@@ -74,6 +76,20 @@ class DrawingRecord:
             or not self.member_name
             or self.member_source in (SOURCE_NONE, SOURCE_FILENAME)
         )
+
+    @property
+    def band(self) -> tuple[str, str]:
+        """Which band this row belongs under: ``("seq", "172")``, ``("type", "CH")``.
+
+        An assembly is grouped by the sequence it is erected in. A single part
+        has no sequence - it is cut for an assembly - so it is grouped by its
+        type instead. Rows with neither fall in a band of their own.
+        """
+        if self.seq_group:
+            return ("seq", self.seq_group)
+        if self.type_code:
+            return ("type", self.type_code)
+        return ("", "")
 
     @property
     def note_text(self) -> str:
@@ -199,6 +215,22 @@ def parse_member_mark(mark: str, profile: ExtractionProfile | None = None
         digits = max(1, prof.zone_seq_digits)
         zone = seq[:digits].lstrip("0") or seq[:digits]
     return job, seq, zone
+
+
+def parse_part_type(mark: str, profile: ExtractionProfile | None = None) -> str:
+    """The type code of a single-part mark: "17ch104" -> "CH".
+
+    Empty when the mark does not fit the shape, which includes every mark that
+    encodes a sequence instead - the two are mutually exclusive by construction.
+    """
+    prof = profile or ExtractionProfile()
+    if not mark or not prof.part_type_pattern:
+        return ""
+    try:
+        match = re.match(prof.part_type_pattern, mark.strip(), re.IGNORECASE)
+    except re.error:
+        return ""
+    return (match.group("type").upper() if match else "")
 
 
 def _tidy_seq(value: str) -> str:
@@ -337,6 +369,10 @@ def extract_drawing(
     record.job_no, record.seq_group, record.zone = parse_member_mark(
         record.member_name, prof
     )
+    # Only when the mark carries no sequence: an assembly is grouped by the
+    # sequence it is erected in, a single part by the type it is cut as.
+    if not record.seq_group:
+        record.type_code = parse_part_type(record.member_name, prof)
 
     return record
 

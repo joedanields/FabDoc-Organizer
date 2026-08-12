@@ -73,8 +73,8 @@ def test_a_zone_is_split_into_its_sequences(tmp_path: Path):
         make_drawing(root / "Assembly" / f"{mark}  - Rev A.pdf", mark, revision="A")
     cat = build_register(root).categories[0]
 
-    clusters = cat.sequence_groups("1")
-    assert [seq for seq, _ in clusters] == ["130", "172", "173"]
+    clusters = cat.band_groups("1")
+    assert [key for key, _ in clusters] == [("seq", "130"), ("seq", "172"), ("seq", "173")]
     assert [len(recs) for _, recs in clusters] == [1, 2, 1]
     assert sum(len(r) for _, r in clusters) == cat.total
 
@@ -84,7 +84,7 @@ def test_serial_numbers_restart_in_every_sequence(tmp_path: Path):
     for mark in ["17172C1", "17172C2", "17172C3", "17173R1", "17173R2"]:
         make_drawing(root / "Assembly" / f"{mark}  - Rev A.pdf", mark, revision="A")
     cat = build_register(root).categories[0]
-    numbers = {seq: [r.seq_no for r in recs] for seq, recs in cat.sequence_groups("1")}
+    numbers = {key[1]: [r.seq_no for r in recs] for key, recs in cat.band_groups("1")}
     assert numbers == {"172": ["1", "2", "3"], "173": ["1", "2"]}
 
 
@@ -145,7 +145,7 @@ def test_the_counts_on_the_bands_add_up(banded: Path):
 
 def test_the_summary_breaks_the_total_down_by_sequence(banded: Path):
     rows = _sheet_rows(banded, "Summary")
-    start = next(i for i, r in enumerate(rows) if r and r[0] == "DRAWINGS BY SEQUENCE")
+    start = next(i for i, r in enumerate(rows) if r and r[0] == "DRAWINGS BY BAND")
 
     # The table runs from below its heading to its own TOTAL row; the footnote
     # about amber rows sits further down the sheet.
@@ -159,10 +159,10 @@ def test_the_summary_breaks_the_total_down_by_sequence(banded: Path):
 
     body = [r[:4] for r in table if r[0] != "TOTAL"]
     assert body == [
-        ["1", "172", "Assembly", 2],
-        ["1", "173", "Assembly", 1],
-        ["2", "270", "Assembly", 1],
-        ["2", "271", "Assembly", 2],
+        ["1", "SEQ 172", "Assembly", 2],
+        ["1", "SEQ 173", "Assembly", 1],
+        ["2", "SEQ 270", "Assembly", 1],
+        ["2", "SEQ 271", "Assembly", 2],
     ]
     total = next(r for r in table if r[0] == "TOTAL")
     assert total[3] == sum(r[3] for r in body) == 6
@@ -182,3 +182,66 @@ def test_the_totals_row_is_not_read_back_as_a_drawing(banded: Path):
     assert "TOTAL" not in names
     assert sorted(names) == ["17172C1", "17172C2", "17173R1",
                              "17270S1", "17271X1", "17271X2"]
+
+
+# ------------------------------------------------------ single-part types
+
+
+@pytest.mark.parametrize("mark,type_code", [
+    ("17a24", "A"),
+    ("17ch104", "CH"),
+    ("17hsp1", "HSP"),
+    ("17HSP280", "HSP"),
+])
+def test_a_single_part_mark_yields_its_type(mark: str, type_code: str):
+    from fabdoc.extract import parse_part_type
+    assert parse_part_type(mark) == type_code
+
+
+@pytest.mark.parametrize("mark", ["17172C172", "1710B84", "17130B103"])
+def test_a_sequenced_mark_has_no_type(mark: str):
+    """The two schemes are mutually exclusive, so a band is never ambiguous."""
+    from fabdoc.extract import parse_part_type
+    assert parse_part_type(mark) == ""
+
+
+def test_bands_order_sequences_before_types():
+    assert sorted([("type", "CH"), ("seq", "172"), ("type", "A"), ("seq", "10")],
+                  key=sq.band_sort_key) == [
+        ("seq", "10"), ("seq", "172"), ("type", "A"), ("type", "CH")]
+    assert sq.band_label(("seq", "172")) == "SEQ 172"
+    assert sq.band_label(("type", "ch")) == "TYPE CH"
+
+
+def test_single_parts_band_by_type_not_by_sequence(tmp_path: Path):
+    """A part is cut for an assembly, not erected in a sequence.
+
+    Its mark carries no sequence at all, so without a type band three quarters
+    of a real part sheet sat in one unnamed block below the table.
+    """
+    root = tmp_path / "Zone 1 Parts - 2026-07-22"
+    for mark in ["17a24", "17a25", "17ch104", "17hsp1", "17hsp2", "17172C172"]:
+        make_drawing(root / "Single Part Drawings" / f"{mark}  - Rev 0.pdf",
+                     mark, revision=0)
+    cat = build_register(root).categories[0]
+    assert cat.name == "Part"
+
+    # The sequenced one keeps its zone; the typed ones have none to keep.
+    assert [b for b, _ in cat.band_groups("1")] == [("seq", "172")]
+    assert [b for b, _ in cat.band_groups("")] == [
+        ("type", "A"), ("type", "CH"), ("type", "HSP")]
+
+    counts = {b: len(r) for b, r in cat.band_groups("")}
+    assert counts == {("type", "A"): 2, ("type", "CH"): 1, ("type", "HSP"): 2}
+
+
+def test_every_part_lands_in_exactly_one_band(tmp_path: Path):
+    """The band counts are the only running total, so they must sum to the sheet."""
+    root = tmp_path / "Zone 1 Parts - 2026-07-22"
+    marks = ["17a24", "17ch104", "17ch11", "17hsp1", "17172C172", "17172R8"]
+    for mark in marks:
+        make_drawing(root / "Single Part Drawings" / f"{mark}  - Rev 0.pdf",
+                     mark, revision=0)
+    cat = build_register(root).categories[0]
+    banded = sum(len(r) for z, _ in cat.zone_groups() for _, r in cat.band_groups(z))
+    assert banded == cat.total == len(marks)

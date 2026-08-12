@@ -698,3 +698,43 @@ def test_labels_still_match_with_a_qualifier_or_separator(tmp_path: Path, wordin
     doc.save(pdf)
     doc.close()
     assert extract_drawing(pdf).member_name == "B-101"
+
+
+def test_superseded_label_patterns_are_migrated_too(tmp_path: Path):
+    """The saved profile shadowed the label fix as well as the sequence one.
+
+    A profile saved before the fix carries the loose patterns, the short
+    stopword list, and no reject list at all - so a settings file written once,
+    months ago, kept every single-part drawing named after its material.
+    """
+    import json
+    from fabdoc.config import (SUPERSEDED_DEFAULTS, ExtractionProfile, AppSettings,
+                               load_settings, save_settings)
+
+    settings = AppSettings()
+    settings.profile.member_patterns = list(SUPERSEDED_DEFAULTS["member_patterns"][0])
+    settings.profile.member_stopwords = list(SUPERSEDED_DEFAULTS["member_stopwords"][0])
+    path = tmp_path / "settings.json"
+    save_settings(settings, path)
+
+    # A field added after the file was written is simply absent from it.
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    del raw["profile"]["member_reject_patterns"]
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    fresh = ExtractionProfile()
+    loaded = load_settings(path).profile
+    assert loaded.member_patterns == fresh.member_patterns
+    assert loaded.member_stopwords == fresh.member_stopwords
+    assert loaded.member_reject_patterns == fresh.member_reject_patterns
+
+
+def test_a_label_pattern_the_engineer_wrote_is_kept(tmp_path: Path):
+    from fabdoc.config import AppSettings, load_settings, save_settings
+
+    mine = [r"MY\s*MARK\s*[:\-]\s*([A-Z0-9\-]+)"]
+    settings = AppSettings()
+    settings.profile.member_patterns = mine
+    path = tmp_path / "settings.json"
+    save_settings(settings, path)
+    assert load_settings(path).profile.member_patterns == mine

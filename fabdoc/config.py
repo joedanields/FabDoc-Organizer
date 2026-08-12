@@ -177,6 +177,13 @@ class ExtractionProfile:
     # three digits.
     member_seq_pattern: str = r"^(?P<job>\d{2})(?P<seq>\d{2,3})(?P<rest>[A-Za-z].*)$"
 
+    # Single parts are not erected in a sequence - they are cut for an assembly
+    # - so they are marked differently: "17a24", "17ch104", "17hsp1" are job 17,
+    # type A / CH / HSP, piece 24 / 104 / 1. There is no sequence in them at all,
+    # and 92 of 124 single-part drawings in a real package are named this way.
+    # The type is what groups them, the way the sequence groups an assembly.
+    part_type_pattern: str = r"^(?P<job>\d{2})(?P<type>[A-Za-z]+)(?P<piece>\d+)$"
+
     # Zone is the leading digit(s) of the sequence: seq 172 -> zone 1,
     # seq 270 -> zone 2, seq 471 -> zone 4.
     derive_zone_from_seq: bool = True
@@ -278,9 +285,30 @@ def default_settings_path() -> Path:
 # nothing on a 2-digit sequence, so a package numbered "Seq 10-12, 120-139" lost
 # every drawing in sequences 10, 11 and 12 to an unbanded table at the foot of
 # the sheet - 245 rows of a 968-row register, on a fix that had already shipped.
-SUPERSEDED_DEFAULTS: dict[str, list[str]] = {
+SUPERSEDED_DEFAULTS: dict[str, list[Any]] = {
     "member_seq_pattern": [
         r"^(?P<job>\d{2})(?P<seq>\d{3})(?P<rest>[A-Za-z].*)$",
+    ],
+    # The label patterns whose qualifier and separator were both optional, so
+    # the bare noun in a column heading ("In Assembly") read as a label.
+    "member_patterns": [
+        [
+            r"(?:ASSEMBLY|ASSY)\s*(?:MARK|MK|No\.?|NUMBER|ID|REF|POS(?:ITION)?)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:MEMBER)\s*(?:MARK|MK|NAME|No\.?|NUMBER|ID|REF|POS(?:ITION)?)?\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:PIECE|PART)\s*(?:MARK|MK|No\.?|NUMBER|ID|REF|POS(?:ITION)?)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"\bMARK\s*[:\-]\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+            r"(?:DRAWING|DRG|DWG)\s*(?:No\.?|NUMBER|NAME)\s*[:\-]?\s*([A-Z0-9][A-Z0-9._/\-]{1,19})",
+        ],
+    ],
+    # The stopword list before the single-part column headings were added.
+    "member_stopwords": [
+        [
+            "SCALE", "SHEET", "DATE", "REV", "REVISION", "DRAWN", "CHECKED",
+            "APPROVED", "TITLE", "PROJECT", "CLIENT", "ZONE", "NONE", "NTS",
+            "DETAIL", "SECTION", "NOTES", "TOTAL", "WEIGHT", "GRADE", "QTY",
+            "ID", "NO", "NO.", "NUMBER", "NAME", "MARK", "MK", "POS", "POSITION",
+            "REF", "TYPE", "ITEM", "DESC", "DESCRIPTION", "OF", "SIZE", "UNIT",
+        ],
     ],
 }
 

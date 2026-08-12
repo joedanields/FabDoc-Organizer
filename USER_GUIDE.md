@@ -169,10 +169,28 @@ Sequences run in **plain ascending order**. Two- and three-digit sequences are
 both understood and sort together, so `10` comes before `120` rather than after
 it — a package numbered "Seq 10-12, 120-139" comes out in that order.
 
+**Single parts are banded by type, not by sequence.** A part is not erected in a
+sequence; it is cut for an assembly. Its mark carries a type instead —
+`17ch104` is job 17, type `CH`, piece 104 — so parts group under `TYPE CH`
+rather than a sequence band. In a real package 92 of 124 single-part drawings
+are marked this way, so without it three quarters of the sheet would sit in one
+unnamed block. Sequence bands come first, then type bands alphabetically:
+
+```
+ZONE 1   (Seq 172)   -   32 drawing(s)
+    SEQ 172    -   32 drawing(s)
+TYPE A     -    8 drawing(s)
+TYPE CH    -   23 drawing(s)
+TYPE HSP   -   61 drawing(s)
+TOTAL   -   124 drawing(s)
+```
+
+The part-mark shape is `part_type_pattern` in settings.
+
 `S.No` restarts at 1 in **every sequence band**, because each band is a separate
 slice of work. The counts live on the band headings, on the `TOTAL` row at the
-foot of each sheet, and in the **Drawings by Sequence** table on the Summary
-sheet, which adds every zone, sequence and category up to the register total.
+foot of each sheet, and in the **Drawings by Band** table on the Summary
+sheet, which adds every zone, band and category up to the register total.
 
 > **If you see a table with no green band**, those are the rows whose marks did
 > not match the sequence pattern, so no zone could be derived. Nothing is lost —

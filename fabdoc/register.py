@@ -71,24 +71,25 @@ class CategoryRegister:
                 out.append(rec.seq_group)
         return sorted(out, key=sequencing.sort_key)
 
-    def sequence_groups(self, zone: str) -> list[tuple[str, list[DrawingRecord]]]:
-        """One zone's records clustered by sequence, ascending.
+    def band_groups(self, zone: str) -> list[tuple[tuple[str, str], list[DrawingRecord]]]:
+        """One zone's records clustered into bands, in reading order.
 
-        Returns a single ("", records) group when nothing in the zone carries a
-        sequence, so the writer needs no special case for a package that does
-        not encode one.
+        A band is a sequence for assemblies and a type for single parts (see
+        ``fabdoc.sequencing``). Returns a single ("", "") band when nothing in
+        the zone carries either, so the writer needs no special case for a
+        package that encodes neither.
         """
-        clustered: dict[str, list[DrawingRecord]] = {}
+        clustered: dict[tuple[str, str], list[DrawingRecord]] = {}
         for rec in self.records:
             if rec.zone != zone:
                 continue
-            clustered.setdefault(rec.seq_group or "", []).append(rec)
+            clustered.setdefault(rec.band, []).append(rec)
         if not clustered:
             return []
-        if list(clustered) == [""]:
-            return [("", clustered[""])]
-        ordered = sorted(clustered, key=sequencing.sort_key)
-        return [(s, clustered[s]) for s in ordered]
+        if list(clustered) == [("", "")]:
+            return [(("", ""), clustered[("", "")])]
+        ordered = sorted(clustered, key=sequencing.band_sort_key)
+        return [(b, clustered[b]) for b in ordered]
 
 
 @dataclass
@@ -118,33 +119,34 @@ class Register:
 
 
 def sort_records(records: Iterable[DrawingRecord]) -> list[DrawingRecord]:
-    """Order rows by zone, then sequence, then member mark.
+    """Order rows by zone, then band, then member mark.
 
     Where a mark encodes zone and sequence ("17172C172"), that ordering is far
     more meaningful than the file order the S.No fell back to. Sequences run
-    numerically, so 10 comes before 120 rather than after it. Rows without a
-    zone sort after those with one, and nothing here can raise on odd data.
+    numerically, so 10 comes before 120 rather than after it, and single parts
+    band by type after them. Rows without a zone sort after those with one, and
+    nothing here can raise on odd data.
     """
     def key(rec: DrawingRecord):
         zone = (rec.zone or "").strip()
         zone_rank = (0, int(zone), "") if zone.isdigit() else ((1, 0, zone) if zone else (2, 0, ""))
-        return (zone_rank, sequencing.sort_key(rec.seq_group),
+        return (zone_rank, sequencing.band_sort_key(rec.band),
                 natural_key(rec.member_name or rec.source_file))
 
     return sorted(records, key=key)
 
 
 def renumber_by_zone(records: Iterable[DrawingRecord]) -> None:
-    """Assign S.No 1..N restarting within each zone and sequence, in place.
+    """Assign S.No 1..N restarting within each zone and band, in place.
 
     The drawings carry no printed sequence number, so S.No is a position in the
     register. It restarts at every band heading, which is what makes it read as
     "the fourth drawing of sequence 172" rather than a running total nobody can
     use. The band headings and the summary carry the counts.
     """
-    counters: dict[tuple[str, str], int] = {}
+    counters: dict[tuple[str, tuple[str, str]], int] = {}
     for rec in records:
-        key = (rec.zone or "", rec.seq_group or "")
+        key = (rec.zone or "", rec.band)
         counters[key] = counters.get(key, 0) + 1
         rec.seq_no = str(counters[key])
 

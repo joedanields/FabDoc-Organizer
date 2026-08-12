@@ -164,20 +164,22 @@ def _write_category_sheet(ws: Worksheet, register: Register,
             label += f"   -   {len(records)} drawing(s)"
             band(label, _ZONE_FONT, _ZONE_FILL)
 
-        # Inside a zone the drawings are split again by sequence: the sequence
-        # is what the shop erects to, and a zone of 500 drawings read as one
-        # list hides that it is twenty separate slices of work.
-        clusters = category.sequence_groups(zone) if zone else [("", records)]
-        for seq_no, seq_records in clusters:
-            if seq_no:
-                band(f"    {sequencing.label_for(seq_no)}"
-                     f"   -   {len(seq_records)} drawing(s)",
+        # Drawings are split again into bands: by sequence for assemblies,
+        # by type for single parts. A zone of 500 drawings read as one list
+        # hides that it is twenty separate slices of work - and single parts
+        # carry no sequence at all, so without the type band three quarters of
+        # a part sheet would sit in one unnamed block.
+        clusters = category.band_groups(zone)
+        for key, band_records in clusters:
+            if key[1]:
+                band(f"    {sequencing.band_label(key)}"
+                     f"   -   {len(band_records)} drawing(s)",
                      _SEQ_FONT, _SEQ_FILL)
-            table(seq_records)
-            if seq_no:
-                row += 1      # spacer between sequence clusters
+            table(band_records)
+            if key[1]:
+                row += 1      # spacer between bands
 
-        if zone and not clusters:
+        if not clusters:
             table(records)
         if zone:
             row += 1          # wider gap between zones
@@ -210,19 +212,19 @@ def _write_sequence_breakdown(ws: Worksheet, register: Register, row: int) -> in
     that adds up: every sequence, its category, its count, and a total that
     must equal the category totals above it.
     """
-    tally: dict[tuple[str, str, str], int] = {}
+    tally: dict[tuple[str, tuple[str, str], str], int] = {}
     for cat in register.categories:
         for rec in cat.records:
-            key = (rec.zone or "", rec.seq_group or "", cat.name)
+            key = (rec.zone or "", rec.band, cat.name)
             tally[key] = tally.get(key, 0) + 1
-    if not tally or all(not z and not s for z, s, _ in tally):
-        return row          # this package does not encode zone or sequence
+    if not tally or all(not z and not b[1] for z, b, _ in tally):
+        return row          # this package encodes neither zone nor band
 
-    heading = ws.cell(row=row, column=1, value="DRAWINGS BY SEQUENCE")
+    heading = ws.cell(row=row, column=1, value="DRAWINGS BY BAND")
     heading.font = _LABEL_FONT
     row += 1
 
-    for idx, name in enumerate(["Zone", "Sequence", "Category", "Drawings"], start=1):
+    for idx, name in enumerate(["Zone", "Band", "Category", "Drawings"], start=1):
         c = ws.cell(row=row, column=idx, value=name)
         c.font = _HEADER_FONT
         c.fill = _HEADER_FILL
@@ -230,13 +232,14 @@ def _write_sequence_breakdown(ws: Worksheet, register: Register, row: int) -> in
         c.border = _BORDER
     row += 1
 
-    def order(key: tuple[str, str, str]) -> tuple:
-        zone, seq, cat = key
+    def order(key: tuple[str, tuple[str, str], str]) -> tuple:
+        zone, band, cat = key
         zone_rank = (0, int(zone)) if zone.isdigit() else (1, 0)
-        return (zone_rank, sequencing.sort_key(seq), cat)
+        return (zone_rank, sequencing.band_sort_key(band), cat)
 
-    for zone, seq, cat in sorted(tally, key=order):
-        values = [zone or "-", seq or "-", cat, tally[(zone, seq, cat)]]
+    for zone, band, cat in sorted(tally, key=order):
+        label = sequencing.band_label(band) if band[1] else "-"
+        values = [zone or "-", label, cat, tally[(zone, band, cat)]]
         for idx, value in enumerate(values, start=1):
             c = ws.cell(row=row, column=idx, value=value)
             c.border = _BORDER
