@@ -25,6 +25,11 @@ fabdoc-gui = "fabdoc.gui:main"
 [tool.setuptools.packages.find]
 include = ["fabdoc*"]
 
+# The window icon and masthead lockup. Without this an installed copy loses its
+# branding, because a wheel ships .py files and nothing else by default.
+[tool.setuptools.package-data]
+fabdoc = ["assets/*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

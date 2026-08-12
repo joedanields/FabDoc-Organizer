@@ -37,6 +37,24 @@ from .validate import ValidationResult, validate
 
 PAD = 8
 
+# Struzon house colours, sampled from the logo artwork. The register's own row
+# colours are not branded - amber and orange mean "check this" and "could not be
+# read" in the workbook, and that has to stay consistent across the front ends.
+BRAND_RED = "#AE0000"
+BRAND_NAVY = "#002D82"
+
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def _asset(name: str) -> Path | None:
+    """A bundled image, or None when it is not there.
+
+    Branding is decoration. An engineer on a locked-down machine must still get
+    a working app if the assets did not come along with it.
+    """
+    path = ASSETS / name
+    return path if path.is_file() else None
+
 
 class HoldReasonDialog(tk.Toplevel):
     """Ask why approved members were left out of a fabrication release.
@@ -201,10 +219,51 @@ class FabDocApp(ttk.Frame):
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
 
+        # Held on the instance: Tk keeps only a weak reference to a PhotoImage,
+        # so a local would be collected and the icon would silently vanish.
+        self._images: dict[str, tk.PhotoImage] = {}
+        self._set_window_icon()
+
         self._build_ui()
         self.after(100, self._drain_queue)
 
     # -- layout -------------------------------------------------------------
+
+    def _set_window_icon(self) -> None:
+        """Put the ST monogram on the window and the taskbar button."""
+        icon = _asset("struzon-mark.png")
+        if icon is None:
+            return
+        try:
+            image = tk.PhotoImage(file=str(icon))
+        except tk.TclError:
+            return          # a Tk built without PNG support
+        self._images["icon"] = image
+        try:
+            self.master.iconphoto(True, image)
+        except tk.TclError:
+            pass
+
+    def _build_masthead(self) -> None:
+        """The company lockup above the tabs, matching the web front end."""
+        logo = _asset("struzon-logo.png")
+        if logo is None:
+            return
+        try:
+            image = tk.PhotoImage(file=str(logo))
+        except tk.TclError:
+            return
+        self._images["logo"] = image
+
+        # tk.Frame, not ttk: the masthead is white whatever theme ttk picked,
+        # because the artwork is printed on a white ground.
+        bar = tk.Frame(self, background="#FFFFFF")
+        bar.pack(fill="x", pady=(0, PAD))
+        tk.Label(bar, image=image, background="#FFFFFF").pack(side="left", padx=(6, 0), pady=6)
+        tk.Label(bar, text=f"{__app_name__} {__version__}", background="#FFFFFF",
+                 foreground=BRAND_NAVY, font=("Segoe UI", 10, "bold")).pack(
+                     side="right", padx=(0, 10))
+        tk.Frame(self, background=BRAND_RED, height=2).pack(fill="x", pady=(0, PAD))
 
     def _build_ui(self) -> None:
         style = ttk.Style()
@@ -212,11 +271,14 @@ class FabDocApp(ttk.Frame):
             style.theme_use("vista")
         except tk.TclError:
             pass
-        style.configure("Heading.TLabel", font=("Segoe UI", 11, "bold"))
+        style.configure("Heading.TLabel", font=("Segoe UI", 11, "bold"),
+                        foreground=BRAND_NAVY)
         style.configure("Sub.TLabel", foreground="#666666")
         style.configure("Good.TLabel", foreground="#1E7B34", font=("Segoe UI", 10, "bold"))
         style.configure("Bad.TLabel", foreground="#B00020", font=("Segoe UI", 10, "bold"))
+        style.configure("TLabelframe.Label", foreground=BRAND_NAVY)
 
+        self._build_masthead()
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True)
         self.nb.add(self._build_generate_tab(), text="  1. Generate Register  ")

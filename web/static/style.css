@@ -1,10 +1,21 @@
-/* Deliberately close to the desktop app: same blue title band, same amber for
-   "check this" and orange for "not shipped", so a register and a tracker read
-   the same whichever front end produced them. */
+/* Struzon house colours, sampled from the logo artwork: the wordmark red and
+   the "Technologies" navy, with the monogram's two blues underneath them.
+
+   The row colours below are deliberately NOT branded. Amber means "check this
+   row" and orange means "could not be read" in the generated workbook, and a
+   register has to read the same whichever front end produced it - so those
+   stay tied to excel_out.py rather than to the brand. */
 
 :root {
-  --navy: #1f4e79;
-  --blue: #2e75b6;
+  --brand-red: #ae0000;      /* STRUZON wordmark */
+  --brand-red-dark: #8c0000;
+  --brand-navy: #002d82;     /* "Technologies Pvt. Ltd" */
+  --brand-navy-dark: #001f5c;
+  --brand-deep: #08436d;     /* monogram T */
+  --brand-steel: #1c7da3;    /* monogram highlight */
+
+  --navy: var(--brand-navy);
+  --blue: var(--brand-deep);
   --green: #548235;
   --amber: #fff2cc;
   --orange: #f8cbad;
@@ -28,24 +39,46 @@ body {
   background: #f4f6f8;
 }
 
+/* The logo is printed artwork on a solid white ground, so the masthead is white
+   and the brand colours are carried by everything around it. Cutting the white
+   out to sit the logo on a dark band would take the counters inside the letters
+   and the trust ring with it. */
 header {
-  background: var(--navy);
-  color: #fff;
-  padding: 14px 24px;
+  background: #fff;
+  color: var(--brand-navy);
+  padding: 12px 24px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: 14px;
+  border-bottom: 3px solid var(--brand-red);
 }
-header h1 { margin: 0; font-size: 18px; letter-spacing: .3px; }
-.version { color: #bcd4ea; font-size: 12px; }
+header .brand { height: 46px; width: auto; max-width: 100%; }
+header .product { text-align: right; line-height: 1.25; }
+header h1 {
+  margin: 0; font-size: 17px; letter-spacing: .3px;
+  color: var(--brand-navy); font-weight: 600;
+}
+.version { color: var(--muted); font-size: 12px; }
 
-.tabs { display: flex; gap: 2px; background: var(--navy); padding: 0 16px; }
+.tabs { display: flex; gap: 2px; background: var(--brand-navy); padding: 0 16px; flex-wrap: wrap; }
 .tab {
-  background: #2b5f8f; color: #dbe9f6; border: 0;
+  background: #1c4396; color: #d5def5; border: 0;
   padding: 9px 18px; cursor: pointer; font-size: 13px;
   border-radius: 4px 4px 0 0;
+  border-top: 3px solid transparent;
 }
-.tab.active { background: #f4f6f8; color: var(--navy); font-weight: 600; }
+.tab:hover { background: #2b539f; color: #fff; }
+.tab.active {
+  background: #f4f6f8; color: var(--brand-navy); font-weight: 600;
+  border-top-color: var(--brand-red);
+}
+
+@media (max-width: 620px) {
+  header { justify-content: center; }
+  header .product { text-align: center; }
+}
 
 .panel { display: none; padding: 20px 24px 60px; max-width: 1180px; }
 .panel.active { display: block; }
@@ -66,9 +99,14 @@ button {
   padding: 7px 14px; border-radius: 4px; cursor: pointer; font-size: 13px;
 }
 button:hover { background: #eef3f8; }
-button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
-button.primary:hover { background: #24608f; }
+button.primary {
+  background: var(--brand-navy); border-color: var(--brand-navy); color: #fff;
+}
+button.primary:hover { background: var(--brand-navy-dark); border-color: var(--brand-navy-dark); }
 button:disabled { opacity: .5; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--brand-red); outline-offset: 1px;
+}
 
 input[type=text], select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; }
 label.inline { margin-right: 20px; display: inline-flex; align-items: center; gap: 6px; }

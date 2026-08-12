@@ -3,14 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ app_name }}</title>
+<title>{{ app_name }} &mdash; Struzon Technologies</title>
+<link rel="icon" href="/static/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/img/favicon.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body data-local="{{ 'yes' if local else 'no' }}">
 
 <header>
-  <h1>{{ app_name }}</h1>
-  <span class="version">{{ version }} &middot; web</span>
+  <img class="brand" src="/static/img/struzon-logo.png"
+       alt="Struzon Technologies Pvt. Ltd &mdash; Stands For Trust">
+  <div class="product">
+    <h1>{{ app_name }}</h1>
+    <span class="version">{{ version }} &middot; web</span>
+  </div>
 </header>
 
 <nav class="tabs">
