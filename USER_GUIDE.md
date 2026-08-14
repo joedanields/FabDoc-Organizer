@@ -472,11 +472,29 @@ sits to the right of every history sheet:
 | `0` | Released For Fabrication |
 | `1, 2 …` | Revised As Noted |
 
+Members are banded by sequence, exactly as in the register — `SEQ 172`, then
+`TYPE CH` for single parts — so a history sheet of 900 members still reads as
+the slices of work it is made of.
+
 **`H` is written into the cell**, not just coloured orange — a printed tracker
 loses the fill, and on hold is the one state the shop floor acts on.
 
 An empty cell means the member was not in that issue and nothing is owed: either
 it already shipped in another release, or it was dropped at re-approval.
+
+The Tracker sheet carries two tables. The first is one row per drawing category
+per issue, then a bold total: what moved in each delivery, and how much of it was
+assemblies rather than single parts. The second, **Where the package stands, by
+sequence**, is what is left:
+
+| Zone | Sequence | Category | Members | Released | On Hold | Remaining |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | SEQ 172 | Assembly | 56 | 32 | 23 | 24 |
+| 1 | SEQ 173 | Assembly | 15 | 0 | 14 | 15 |
+
+**Remaining** is everything not yet released. **On Hold** is the part of that
+which is in the current approved scope. They differ when a member was dropped at
+re-approval: it is remaining but no longer owed, so it is not held.
 
 **Erection drawings are not tracked.** An erection drawing shows where an
 assembly goes on site; it is not a fabricated item, so it has no approved scope

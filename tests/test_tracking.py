@@ -340,8 +340,13 @@ def test_reasons_can_be_keyed_by_identity_or_by_mark():
 
 
 def _member_names(ws) -> list[str]:
-    """Member column only - the legend to the right also occupies these rows."""
-    return [r[0] for r in ws.iter_rows(min_row=4, values_only=True) if r and r[0]]
+    """Member column only.
+
+    Skips the legend rows to the right and the band headings between clusters,
+    which both live in the same rows as member data.
+    """
+    return [r[0] for r in ws.iter_rows(min_row=4, values_only=True)
+            if r and r[0] and "member(s)" not in str(r[0])]
 
 
 def _members(names, category="Part", rev="0"):
@@ -409,7 +414,7 @@ def test_the_history_sheet_lists_each_member_once(tmp_path: Path):
     wb = load_workbook(out)
     try:
         sheet = next(n for n in wb.sheetnames if "History" in n)
-        names = [r[0] for r in wb[sheet].iter_rows(min_row=4, values_only=True) if r and r[0]]
+        names = _member_names(wb[sheet])
     finally:
         wb.close()
     assert sorted(names) == ["17HSP1", "17ch104"]
@@ -519,7 +524,10 @@ def _tracker_rows(ws) -> list[tuple]:
             continue
         if not seen_header or not r or r[0] is None:
             continue
-        if isinstance(r[0], str) and r[0].startswith("Members absent"):
+        # The by-sequence table and the footnote follow the issue table.
+        if isinstance(r[0], str) and (r[0].startswith("Members absent")
+                                      or r[0].startswith("WHERE THE PACKAGE")
+                                      or r[0] == "Zone"):
             break
         rows.append((r[0], r[1], r[6], r[7], r[8], r[9], r[10], r[11], r[12]))
     return rows
@@ -601,3 +609,108 @@ def test_a_single_category_issue_stays_one_row(tmp_path: Path):
         wb.close()
     assert [r[2] for r in rows] == ["Assembly"]
     assert rows[0][3] == 1
+
+
+def _seq_summary(ws) -> list[tuple]:
+    """The by-sequence table on the Tracker sheet."""
+    rows, on = [], False
+    for r in ws.iter_rows(values_only=True):
+        if r and isinstance(r[0], str) and r[0].startswith("WHERE THE PACKAGE"):
+            on = True
+            continue
+        if not on or not r or r[0] is None or r[0] == "Zone":
+            continue
+        if isinstance(r[0], str) and r[0].startswith("Members absent"):
+            break
+        rows.append(tuple(r[:7]))
+    return rows
+
+
+def _banded(names: list[str], category="Assembly", rev="A"):
+    from collections import OrderedDict
+    return OrderedDict(
+        (n, {"name": n, "rev": rev, "zone": n[2] if len(n) > 2 else "",
+             "category": category}) for n in names
+    )
+
+
+def test_the_history_sheet_bands_members_by_sequence(tmp_path: Path):
+    """The same banding as the register: a flat list hides the slices of work."""
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(
+        label="approval", stage=STAGE_IFA, round_no="1",
+        members=_banded(["17172C1", "17172C2", "17173R1"])))
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+
+    wb = load_workbook(out)
+    try:
+        ws = wb["History - Assembly"]
+        heads = [str(r[0]) for r in ws.iter_rows(min_row=4, values_only=True)
+                 if r and r[0] and "member(s)" in str(r[0])]
+    finally:
+        wb.close()
+    assert heads == ["SEQ 172   -   2 member(s)", "SEQ 173   -   1 member(s)"]
+
+
+def test_single_parts_band_by_type_in_the_tracker_too(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(
+        label="approval", stage=STAGE_IFA, round_no="1",
+        members=_banded(["17ch1", "17ch2", "17hsp9"], category="Part")))
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+
+    wb = load_workbook(out)
+    try:
+        heads = [str(r[0]) for r in wb["History - Part"].iter_rows(
+            min_row=4, values_only=True) if r and r[0] and "member(s)" in str(r[0])]
+    finally:
+        wb.close()
+    assert heads == ["TYPE CH   -   2 member(s)", "TYPE HSP   -   1 member(s)"]
+
+
+def test_the_main_sheet_reports_where_each_sequence_stands(tmp_path: Path):
+    """The issue table says what moved; this says what is left, per sequence."""
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(
+        label="approval", stage=STAGE_IFA, round_no="1",
+        members=_banded(["17172C1", "17172C2", "17173R1"])))
+    state.add_issue(IssueEntry(
+        label="release", stage=STAGE_IFF, round_no="1",
+        members=_banded(["17172C1"], rev="0")))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        rows = _seq_summary(wb["Tracker"])
+    finally:
+        wb.close()
+
+    by_band = {r[1]: r for r in rows if r[0] != "TOTAL"}
+    # zone, sequence, category, members, released, on hold, remaining
+    assert by_band["SEQ 172"][3:] == (2, 1, 1, 1)
+    assert by_band["SEQ 173"][3:] == (1, 0, 1, 1)
+
+    total = next(r for r in rows if r[0] == "TOTAL")
+    assert total[3:] == (3, 1, 2, 2)
+
+
+def test_the_by_sequence_totals_match_the_rows(tmp_path: Path):
+    state = ChainState(project="P")
+    members = _banded(["17172C1", "17173R1"])
+    members.update(_banded(["17ch1"], category="Part"))
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=members))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_banded(["17172C1"], rev="0")))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        rows = _seq_summary(wb["Tracker"])
+    finally:
+        wb.close()
+
+    body = [r for r in rows if r[0] != "TOTAL"]
+    total = next(r for r in rows if r[0] == "TOTAL")
+    for col in range(3, 7):
+        assert total[col] == sum(r[col] for r in body), f"column {col}"

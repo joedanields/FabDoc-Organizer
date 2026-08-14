@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import AppSettings
+from .extract import band_for_mark
 from .register import Register
 from .validate import normalise
 
@@ -274,8 +275,11 @@ class PackageChain:
     # rather than the mark as written, so a member the detailer spelled
     # "17CH104" in one issue and "17ch104" in the next is one row, not two.
     history: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
-    # comparison key -> the member as most recently drawn: name, zone, category.
+    # comparison key -> the member as most recently drawn: name, zone, category,
+    # and the band it sits in ("seq"/"172", "type"/"CH").
     member_info: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
+    # Every key that has appeared in some IFF release, for the by-sequence view.
+    released_keys: set = field(default_factory=set)
 
     @property
     def baseline_label(self) -> str:
@@ -422,10 +426,14 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
             info = entry.members.get(ident, {})
             chain.history.setdefault(key, {})[entry.label] = info.get("rev", "")
             # The latest issue is the current spelling of the mark.
+            name = info.get("name") or split_member_id(ident)[1]
+            kind, band = band_for_mark(name, cfg.profile)
             chain.member_info[key] = {
-                "name": info.get("name") or split_member_id(ident)[1],
+                "name": name,
                 "zone": info.get("zone", "") or chain.member_info.get(key, {}).get("zone", ""),
                 "category": info.get("category", ""),
+                "band_kind": kind,
+                "band": band,
             }
 
         step = ChainStep(
@@ -443,6 +451,7 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
 
             newly = [k for k in current if k not in released]
             released |= set(current)
+            chain.released_keys |= set(current)
 
             for key in newly:
                 mark = current[key]

@@ -23,6 +23,7 @@ from .categories import safe_sheet_name
 from .excel_out import (_BORDER, _CENTER, _HEADER_FILL, _HEADER_FONT, _LABEL_FONT,
                         _LEFT, _OK_FILL, _REVIEW_FILL, _TITLE_FILL, _TITLE_FONT,
                         _VALUE_FONT, _save_workbook)
+from . import sequencing
 from .tracking import (STAGE_IFA, STAGE_IFF, PackageChain,
                        split_member_id)
 
@@ -33,6 +34,9 @@ _NEW_FILL = PatternFill("solid", fgColor="FFF2CC")    # amber: new this issue
 # "H" carries the on-hold state in text as well as in colour.
 _HOLD_FONT = Font(bold=True, size=10, color="843C0C")
 _TOTAL_FONT = Font(bold=True, size=10)
+# The band heading inside a history sheet, matching the register.
+_BAND_FILL = PatternFill("solid", fgColor="C5E0B4")
+_BAND_FONT = Font(bold=True, size=10, color="375623")
 
 
 def _title(ws: Worksheet, text: str, width: int) -> None:
@@ -149,6 +153,9 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
                     cell.font = _TOTAL_FONT
             row += 1
 
+    row += 2
+    row = _write_by_sequence(ws, chain, row)
+
     row += 1
     note = ws.cell(
         row=row, column=1,
@@ -163,8 +170,79 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
             [5, 9, 8, 8, 52, 13, 14, 10, 9, 9, 10, 10, 9, 34], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
     # Below the header, wherever it landed - the label block above it is
-    # shorter when a chain has no approved baseline yet.
-    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+    # shorter when a chain has no approved baseline yet. Set by coordinate:
+    # a merged cell cannot be a freeze point.
+    ws.freeze_panes = f"A{header_row + 1}"
+
+
+def _write_by_sequence(ws: Worksheet, chain: PackageChain, row: int) -> int:
+    """Where the package stands, one line per sequence. Returns the next free row.
+
+    The issue table says what moved in each delivery. This says what is left:
+    for every band of work, how much has been released and how much is still
+    approved but unshipped. That is the question asked in a progress meeting,
+    and answering it per sequence is what makes it actionable - a sequence is a
+    slice the shop can finish.
+    """
+    tally: "OrderedDict[tuple, dict]" = OrderedDict()
+    for key, info in chain.member_info.items():
+        band = (info.get("band_kind", ""), info.get("band", ""))
+        group = (info.get("zone", ""), band, info.get("category", ""))
+        entry = tally.setdefault(group, {"members": 0, "released": 0, "held": 0})
+        entry["members"] += 1
+        if key in chain.released_keys:
+            entry["released"] += 1
+        hold = chain.holds.get(key)
+        if hold is not None and not hold.released_in:
+            entry["held"] += 1
+    if not tally:
+        return row
+
+    heading = ws.cell(row=row, column=1, value="WHERE THE PACKAGE STANDS, BY SEQUENCE")
+    heading.font = _LABEL_FONT
+    row += 1
+
+    columns = ["Zone", "Sequence", "Category", "Members", "Released",
+               "On Hold", "Remaining"]
+    _headers(ws, columns, row)
+    row += 1
+
+    def order(group: tuple) -> tuple:
+        zone, band, category = group
+        zone_rank = (0, int(zone)) if str(zone).isdigit() else (1, 0)
+        return (zone_rank, sequencing.band_sort_key(band), category)
+
+    for group in sorted(tally, key=order):
+        zone, band, category = group
+        counts = tally[group]
+        remaining = counts["members"] - counts["released"]
+        values = [zone or "-", sequencing.band_label(band) if band[1] else "-",
+                  category or "-", counts["members"], counts["released"],
+                  counts["held"], remaining]
+        for c_idx, value in enumerate(values, start=1):
+            cell = ws.cell(row=row, column=c_idx, value=value)
+            cell.border = _BORDER
+            cell.alignment = _LEFT if c_idx == 3 else _CENTER
+            if counts["held"] and c_idx == 6:
+                cell.fill = _HOLD_FILL
+                cell.font = _HOLD_FONT
+            elif remaining == 0 and counts["released"]:
+                cell.fill = _IFF_FILL          # this band is fully out
+        row += 1
+
+    totals = [
+        "TOTAL", "", "",
+        sum(c["members"] for c in tally.values()),
+        sum(c["released"] for c in tally.values()),
+        sum(c["held"] for c in tally.values()),
+        sum(c["members"] - c["released"] for c in tally.values()),
+    ]
+    for c_idx, value in enumerate(totals, start=1):
+        cell = ws.cell(row=row, column=c_idx, value=value)
+        cell.border = _BORDER
+        cell.font = _TOTAL_FONT
+        cell.alignment = _LEFT if c_idx == 3 else _CENTER
+    return row + 1
 
 
 _LEGEND = [
@@ -224,7 +302,44 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
     held = {h.member_key for h in chain.outstanding}
 
     row = 4
-    for member in (members if members is not None else list(chain.history)):
+    ordered = members if members is not None else list(chain.history)
+    # Same banding as the register: sequence for assemblies, type for single
+    # parts. A history sheet of 900 members read as one list hides which slice
+    # of work each row belongs to.
+    grouped: "OrderedDict[tuple[str, str], list[str]]" = OrderedDict()
+    for key in ordered:
+        info = chain.member_info.get(key, {})
+        grouped.setdefault((info.get("band_kind", ""), info.get("band", "")),
+                           []).append(key)
+    banded = sorted(grouped, key=sequencing.band_sort_key)
+
+    for band in banded:
+        if band[1] and len(grouped) > 1:
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=len(columns))
+            head = ws.cell(row=row, column=1,
+                           value=f"{sequencing.band_label(band)}"
+                                 f"   -   {len(grouped[band])} member(s)")
+            head.font = _BAND_FONT
+            head.fill = _BAND_FILL
+            head.alignment = _LEFT
+            head.border = _BORDER
+            row += 1
+        row = _history_rows(ws, chain, grouped[band], labels, held, row)
+
+    _write_legend(ws, len(columns) + 2, 3)
+
+    ws.freeze_panes = "C4"
+    ws.column_dimensions["A"].width = 24
+    ws.column_dimensions["B"].width = 8
+    for idx in range(3, len(columns) + 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 11
+
+
+def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
+                  labels: list[str], held: set, row: int) -> int:
+    """The member rows of one band. Returns the next free row."""
+    for member in members:
         per_issue = chain.history.get(member, {})
         info = chain.member_info.get(member, {})
         name = info.get("name") or split_member_id(member)[1]
@@ -249,15 +364,7 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
                     cell.font = _HOLD_FONT
         row += 1
 
-    _write_legend(ws, len(columns) + 2, 3)
-
-    ws.freeze_panes = ws.cell(row=4, column=3)
-    if row > 4:
-        ws.auto_filter.ref = f"A3:{get_column_letter(len(columns))}{row - 1}"
-    ws.column_dimensions["A"].width = 24
-    ws.column_dimensions["B"].width = 8
-    for idx in range(3, len(columns) + 1):
-        ws.column_dimensions[get_column_letter(idx)].width = 11
+    return row
 
 
 def _write_holds(ws: Worksheet, chain: PackageChain) -> None:

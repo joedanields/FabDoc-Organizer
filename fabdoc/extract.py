@@ -236,6 +236,24 @@ def parse_part_type(mark: str, profile: ExtractionProfile | None = None) -> str:
     return (match.group("type").upper() if match else "")
 
 
+def band_for_mark(mark: str, profile: ExtractionProfile | None = None
+                  ) -> tuple[str, str]:
+    """The band a mark belongs to: ``("seq", "172")`` or ``("type", "CH")``.
+
+    The same rule DrawingRecord.band applies, reached from the mark alone so the
+    tracker can band a chain saved before bands existed. Nothing is stored in
+    the chain state that the mark does not already carry.
+    """
+    prof = profile or ExtractionProfile()
+    _job, seq, _zone = parse_member_mark(mark, prof)
+    if seq:
+        return ("seq", seq)
+    type_code = parse_part_type(mark, prof)
+    if type_code:
+        return ("type", type_code)
+    return ("", "")
+
+
 def _tidy_seq(value: str) -> str:
     """Normalise a sequence number so "012" and "12" sort and compare alike."""
     text = value.strip()
