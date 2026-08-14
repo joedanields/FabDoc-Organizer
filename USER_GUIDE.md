@@ -487,14 +487,18 @@ per issue, then a bold total: what moved in each delivery, and how much of it wa
 assemblies rather than single parts. The second, **Where the package stands, by
 sequence**, is what is left:
 
-| Zone | Sequence | Category | Members | Released | On Hold | Remaining |
+| Zone | Sequence | Category | Members | Released | On Hold | Dropped |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | SEQ 172 | Assembly | 56 | 32 | 23 | 24 |
-| 1 | SEQ 173 | Assembly | 15 | 0 | 14 | 15 |
+| 1 | SEQ 172 | Assembly | 56 | 32 | 23 | 1 |
+| 1 | SEQ 173 | Assembly | 15 | 0 | 14 | 1 |
 
-**Remaining** is everything not yet released. **On Hold** is the part of that
-which is in the current approved scope. They differ when a member was dropped at
-re-approval: it is remaining but no longer owed, so it is not held.
+**On Hold** is what a release left behind and the shop is still waiting for.
+**Dropped** is what fell out of scope at re-approval — nobody is waiting for it,
+and it is marked `D` in the history grid.
+
+Note that On Hold only becomes meaningful once a release has happened: a member
+goes on hold when a fabrication release leaves it behind, so before the first
+IFF every sequence reads 0 released and 0 held.
 
 **Erection drawings are not tracked.** An erection drawing shows where an
 assembly goes on site; it is not a fabricated item, so it has no approved scope

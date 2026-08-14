@@ -283,6 +283,10 @@ class PackageChain:
     # member identity -> its band, so the flat sheets can order by sequence
     # without re-parsing every mark they print.
     band_by_ident: dict = field(default_factory=dict)
+    # comparison key -> the issue that dropped it. Only approval rounds drop a
+    # member: absence from a fabrication release is a hold, not a removal. A
+    # member that comes back in a later issue is removed from this map.
+    dropped_at: dict = field(default_factory=dict)
 
     def band_of(self, ident: str) -> tuple[str, str]:
         """The band a member identity sits in, ("", "") when it has none."""
@@ -423,6 +427,10 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
     for entry in state.issues:
         current = _keys(entry, cfg)
 
+        # Anything present again is no longer dropped.
+        for key in current:
+            chain.dropped_at.pop(key, None)
+
         chain.totals[entry.label] = len(current)
         per_category: "OrderedDict[str, int]" = OrderedDict()
         for ident in current.values():
@@ -511,6 +519,7 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
             for key, mark in prior.items():
                 if key not in current:
                     step.removed.append(mark)
+                    chain.dropped_at[key] = entry.label
 
         if entry.stage == STAGE_IFA:
             baseline, baseline_entry = current, entry

@@ -615,6 +615,7 @@ def test_a_single_category_issue_stays_one_row(tmp_path: Path):
 
 
 def _seq_summary(ws) -> list[tuple]:
+    """Rows are (zone, sequence, category, members, released, held, dropped)."""
     """The by-sequence table on the Tracker sheet."""
     rows, on = [], False
     for r in ws.iter_rows(values_only=True):
@@ -689,12 +690,12 @@ def test_the_main_sheet_reports_where_each_sequence_stands(tmp_path: Path):
         wb.close()
 
     by_band = {r[1]: r for r in rows if r[0] != "TOTAL"}
-    # zone, sequence, category, members, released, on hold, remaining
-    assert by_band["SEQ 172"][3:] == (2, 1, 1, 1)
-    assert by_band["SEQ 173"][3:] == (1, 0, 1, 1)
+    # members, released, on hold, dropped
+    assert by_band["SEQ 172"][3:] == (2, 1, 1, 0)
+    assert by_band["SEQ 173"][3:] == (1, 0, 1, 0)
 
     total = next(r for r in rows if r[0] == "TOTAL")
-    assert total[3:] == (3, 1, 2, 2)
+    assert total[3:] == (3, 1, 2, 0)
 
 
 def test_the_by_sequence_totals_match_the_rows(tmp_path: Path):
@@ -787,3 +788,76 @@ def test_both_flat_sheets_stay_filterable(tmp_path: Path):
             assert "Sequence" in [c.value for c in wb[sheet][3]]
     finally:
         wb.close()
+
+
+def test_a_member_dropped_at_re_approval_is_marked_D(tmp_path: Path):
+    """Delivered and dropped were both a blank white cell.
+
+    One is finished work, the other fell out of scope, and on a 900-member
+    sheet the difference is the question "is this done, or did we lose it?".
+    """
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_banded(["17172C1", "17172C2"])))
+    state.add_issue(IssueEntry(label="re-approval", stage=STAGE_IFA, round_no="2",
+                               members=_banded(["17172C1"], rev="B")))
+    chain = build_chain(state)
+    assert chain.dropped_at == {"Assembly::17172C2": "re-approval"}
+
+    out = write_tracker(chain, tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        ws = wb["History - Assembly"]
+        rows = {r[0]: r[2:4] for r in ws.iter_rows(min_row=4, values_only=True)
+                if r and r[0] and "member(s)" not in str(r[0])}
+        seen = {c.value for row in ws.iter_rows() for c in row if c.value}
+    finally:
+        wb.close()
+
+    assert rows["17172C2"] == ("A", "D"), "the issue that dropped it is marked"
+    assert rows["17172C1"] == ("A", "B")
+    assert "Dropped At Re-Approval" in seen, "the legend explains D"
+
+
+def test_a_member_that_comes_back_is_not_marked_dropped(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1",
+                               members=_banded(["17172C1", "17172C2"])))
+    state.add_issue(IssueEntry(label="two", stage=STAGE_IFA, round_no="2",
+                               members=_banded(["17172C1"], rev="B")))
+    state.add_issue(IssueEntry(label="three", stage=STAGE_IFA, round_no="3",
+                               members=_banded(["17172C1", "17172C2"], rev="C")))
+    assert build_chain(state).dropped_at == {}
+
+
+def test_absence_from_a_release_is_a_hold_not_a_drop():
+    """Only an approval round drops a member; a release holds the balance."""
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_banded(["17172C1", "17172C2"])))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_banded(["17172C1"], rev="0")))
+    chain = build_chain(state)
+    assert chain.dropped_at == {}
+    assert [h.member_name for h in chain.outstanding] == ["17172C2"]
+
+
+def test_released_plus_held_plus_dropped_accounts_for_every_member(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1",
+                               members=_banded(["17172C1", "17172C2", "17172C3"])))
+    state.add_issue(IssueEntry(label="two", stage=STAGE_IFA, round_no="2",
+                               members=_banded(["17172C1", "17172C2"], rev="B")))
+    state.add_issue(IssueEntry(label="three", stage=STAGE_IFF, round_no="1",
+                               members=_banded(["17172C1"], rev="0")))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        rows = _seq_summary(wb["Tracker"])
+    finally:
+        wb.close()
+    total = next(r for r in rows if r[0] == "TOTAL")
+    members, released, held, dropped = total[3], total[4], total[5], total[6]
+    assert (members, released, held, dropped) == (3, 1, 1, 1)
+    assert released + held + dropped == members

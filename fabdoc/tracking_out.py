@@ -35,6 +35,9 @@ _NEW_FILL = PatternFill("solid", fgColor="FFF2CC")    # amber: new this issue
 _HOLD_FONT = Font(bold=True, size=10, color="843C0C")
 _TOTAL_FONT = Font(bold=True, size=10)
 # The band heading inside a history sheet, matching the register.
+# Grey, not a warning colour: a dropped member is out of scope, not a problem.
+_DROP_FILL = PatternFill("solid", fgColor="D9D9D9")
+_DROP_FONT = Font(bold=True, size=10, color="595959")
 _BAND_FILL = PatternFill("solid", fgColor="C5E0B4")
 _BAND_FONT = Font(bold=True, size=10, color="375623")
 
@@ -188,10 +191,13 @@ def _write_by_sequence(ws: Worksheet, chain: PackageChain, row: int) -> int:
     for key, info in chain.member_info.items():
         band = (info.get("band_kind", ""), info.get("band", ""))
         group = (info.get("zone", ""), band, info.get("category", ""))
-        entry = tally.setdefault(group, {"members": 0, "released": 0, "held": 0})
+        entry = tally.setdefault(group, {"members": 0, "released": 0, "held": 0,
+                                         "dropped": 0})
         entry["members"] += 1
         if key in chain.released_keys:
             entry["released"] += 1
+        elif key in chain.dropped_at:
+            entry["dropped"] += 1
         hold = chain.holds.get(key)
         if hold is not None and not hold.released_in:
             entry["held"] += 1
@@ -202,8 +208,11 @@ def _write_by_sequence(ws: Worksheet, chain: PackageChain, row: int) -> int:
     heading.font = _LABEL_FONT
     row += 1
 
+    # No "remaining" column: it is Members minus Released, which before the
+    # first release equals Members and reads as a fourth bucket beside the
+    # other three without being one.
     columns = ["Zone", "Sequence", "Category", "Members", "Released",
-               "On Hold", "Remaining"]
+               "On Hold", "Dropped"]
     _headers(ws, columns, row)
     row += 1
 
@@ -215,10 +224,9 @@ def _write_by_sequence(ws: Worksheet, chain: PackageChain, row: int) -> int:
     for group in sorted(tally, key=order):
         zone, band, category = group
         counts = tally[group]
-        remaining = counts["members"] - counts["released"]
         values = [zone or "-", sequencing.band_label(band) if band[1] else "-",
                   category or "-", counts["members"], counts["released"],
-                  counts["held"], remaining]
+                  counts["held"], counts["dropped"]]
         for c_idx, value in enumerate(values, start=1):
             cell = ws.cell(row=row, column=c_idx, value=value)
             cell.border = _BORDER
@@ -226,7 +234,10 @@ def _write_by_sequence(ws: Worksheet, chain: PackageChain, row: int) -> int:
             if counts["held"] and c_idx == 6:
                 cell.fill = _HOLD_FILL
                 cell.font = _HOLD_FONT
-            elif remaining == 0 and counts["released"]:
+            elif counts["dropped"] and c_idx == 7:
+                cell.fill = _DROP_FILL
+                cell.font = _DROP_FONT
+            elif counts["released"] == counts["members"]:
                 cell.fill = _IFF_FILL          # this band is fully out
         row += 1
 
@@ -235,7 +246,7 @@ def _write_by_sequence(ws: Worksheet, chain: PackageChain, row: int) -> int:
         sum(c["members"] for c in tally.values()),
         sum(c["released"] for c in tally.values()),
         sum(c["held"] for c in tally.values()),
-        sum(c["members"] - c["released"] for c in tally.values()),
+        sum(c["dropped"] for c in tally.values()),
     ]
     for c_idx, value in enumerate(totals, start=1):
         cell = ws.cell(row=row, column=c_idx, value=value)
@@ -249,11 +260,13 @@ _LEGEND = [
     ("A", "Approval", "ifa"),
     ("B, C ..", "Re-Approval", "ifa"),
     ("H", "On Hold", "hold"),
+    ("D", "Dropped At Re-Approval", "drop"),
     ("0", "Released For Fabrication", "iff"),
     ("1,2..", "Revised As Noted", "iff"),
 ]
 
-_LEGEND_FILLS = {"ifa": _IFA_FILL, "iff": _IFF_FILL, "hold": _HOLD_FILL}
+_LEGEND_FILLS = {"ifa": _IFA_FILL, "iff": _IFF_FILL, "hold": _HOLD_FILL,
+                 "drop": _DROP_FILL}
 
 
 def _write_legend(ws: Worksheet, column: int, row: int) -> None:
@@ -270,7 +283,7 @@ def _write_legend(ws: Worksheet, column: int, row: int) -> None:
         key.fill = _LEGEND_FILLS[kind]
         key.border = _BORDER
         key.alignment = _CENTER
-        key.font = _HOLD_FONT if kind == "hold" else _VALUE_FONT
+        key.font = {"hold": _HOLD_FONT, "drop": _DROP_FONT}.get(kind, _VALUE_FONT)
         text = ws.cell(row=row, column=column + 1, value=meaning)
         text.font = _VALUE_FONT
         text.alignment = _LEFT
@@ -362,6 +375,13 @@ def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
                     cell.value = "H"
                     cell.fill = _HOLD_FILL
                     cell.font = _HOLD_FONT
+                elif chain.dropped_at.get(member) == entry.label:
+                    # Delivered and dropped were both blank white, so a member
+                    # withdrawn at re-approval read exactly like one that had
+                    # shipped. This is the issue that withdrew it.
+                    cell.value = "D"
+                    cell.fill = _DROP_FILL
+                    cell.font = _DROP_FONT
         row += 1
 
     return row
