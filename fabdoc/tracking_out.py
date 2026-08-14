@@ -369,23 +369,33 @@ def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
 
 def _write_holds(ws: Worksheet, chain: PackageChain) -> None:
     """Approved members that have not shipped, and why."""
-    columns = ["Member Name", "Zone", "Approved Rev", "On Hold Since",
-               "Released In", "Reason"]
+    columns = ["Member Name", "Category", "Zone", "Sequence", "Approved Rev",
+               "On Hold Since", "Released In", "Reason"]
     _title(ws, "ON HOLD - APPROVED BUT NOT YET RELEASED", len(columns))
     _headers(ws, columns, 3)
 
+    # Ordered by band, so the sheet reads as the slices of work it is - but as
+    # a sortable column rather than heading rows, because this sheet is looked
+    # things up in ("which of these still has no reason?") and heading rows
+    # would cost it the filter.
     row = 4
-    for hold in chain.holds.values():
+    ordered = sorted(chain.holds.values(),
+                     key=lambda h: (sequencing.band_sort_key(chain.band_of(h.ident)),
+                                    h.member_name))
+    for hold in ordered:
         shipped = bool(hold.released_in)
-        values = [hold.member_name, hold.zone, hold.revision, hold.held_since,
+        band = chain.band_of(hold.ident)
+        values = [hold.member_name, hold.category or "-", hold.zone,
+                  sequencing.band_label(band) if band[1] else "-",
+                  hold.revision, hold.held_since,
                   hold.released_in or "", hold.reason or ""]
         for c_idx, value in enumerate(values, start=1):
             cell = ws.cell(row=row, column=c_idx, value=value)
             cell.border = _BORDER
-            cell.alignment = _LEFT if c_idx in (1, 6) else _CENTER
+            cell.alignment = _LEFT if c_idx in (1, 8) else _CENTER
             if shipped:
                 cell.fill = _OK_FILL
-            elif c_idx == 6 and not hold.reason:
+            elif c_idx == 8 and not hold.reason:
                 cell.fill = _REVIEW_FILL   # amber: nobody has said why yet
             else:
                 cell.fill = _HOLD_FILL
@@ -394,14 +404,14 @@ def _write_holds(ws: Worksheet, chain: PackageChain) -> None:
     ws.freeze_panes = "A4"
     if row > 4:
         ws.auto_filter.ref = f"A3:{get_column_letter(len(columns))}{row - 1}"
-    for idx, width in enumerate([24, 8, 14, 30, 30, 52], start=1):
+    for idx, width in enumerate([24, 12, 8, 14, 14, 30, 30, 52], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 
 def _write_changes(ws: Worksheet, chain: PackageChain) -> None:
     """Every change, issue by issue - the comparison log, flattened."""
-    columns = ["Issue", "Code", "Stage", "Change", "Category", "Member Name",
-               "From Rev", "To Rev"]
+    columns = ["Issue", "Code", "Stage", "Change", "Category", "Sequence",
+               "Member Name", "From Rev", "To Rev"]
     _title(ws, "CHANGE LOG", len(columns))
     _headers(ws, columns, 3)
 
@@ -415,24 +425,30 @@ def _write_changes(ws: Worksheet, chain: PackageChain) -> None:
             ("On Hold", [(h.ident, h.revision, "") for h in step.on_hold], _HOLD_FILL),
         ]
         for change, items, fill in groups:
+            # Within a change, in sequence order: the log is read looking for
+            # what happened to one slice of work.
+            items = sorted(items, key=lambda i: (
+                sequencing.band_sort_key(chain.band_of(i[0])), i[0]))
             for item in items:
                 ident, from_rev, to_rev = item
                 # The lists carry identities, so the same mark issued as both an
                 # assembly and a part reads as the two separate rows it is.
                 category, name = split_member_id(ident)
+                band = chain.band_of(ident)
                 values = [step.new_label, step.code, step.stage, change,
-                          category, name, from_rev, to_rev]
+                          category, sequencing.band_label(band) if band[1] else "-",
+                          name, from_rev, to_rev]
                 for c_idx, value in enumerate(values, start=1):
                     cell = ws.cell(row=row, column=c_idx, value=value)
                     cell.border = _BORDER
-                    cell.alignment = _LEFT if c_idx in (1, 6) else _CENTER
+                    cell.alignment = _LEFT if c_idx in (1, 7) else _CENTER
                     cell.fill = fill
                 row += 1
 
     ws.freeze_panes = "A4"
     if row > 4:
         ws.auto_filter.ref = f"A3:{get_column_letter(len(columns))}{row - 1}"
-    for idx, width in enumerate([46, 10, 8, 12, 14, 24, 11, 11], start=1):
+    for idx, width in enumerate([46, 10, 8, 12, 14, 14, 24, 11, 11], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 

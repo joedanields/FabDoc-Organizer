@@ -236,9 +236,12 @@ def test_on_hold_sheet_carries_the_reason(tmp_path: Path):
     apply_reasons(state, {key(h): "Client hold" for h in ("A2", "A3", "A4", "A5")})
     out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
     wb = load_workbook(out)
-    rows = list(wb["On Hold"].iter_rows(min_row=4, values_only=True))
+    ws = wb["On Hold"]
+    header = [c.value for c in ws[3]]
+    reason = header.index("Reason")
+    rows = list(ws.iter_rows(min_row=4, values_only=True))
     assert {r[0] for r in rows if r[0]} == {"A2", "A3", "A4", "A5"}
-    assert all(r[5] == "Client hold" for r in rows if r[0])
+    assert all(r[reason] == "Client hold" for r in rows if r[0])
     wb.close()
 
 
@@ -714,3 +717,73 @@ def test_the_by_sequence_totals_match_the_rows(tmp_path: Path):
     total = next(r for r in rows if r[0] == "TOTAL")
     for col in range(3, 7):
         assert total[col] == sum(r[col] for r in body), f"column {col}"
+
+
+def _sheet(ws) -> tuple[list[str], list[tuple]]:
+    header = [c.value for c in ws[3]]
+    rows = [r for r in ws.iter_rows(min_row=4, values_only=True) if r and r[0]]
+    return header, rows
+
+
+def test_the_on_hold_sheet_carries_and_orders_by_sequence(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(
+        label="approval", stage=STAGE_IFA, round_no="1",
+        members=_banded(["17173R1", "17172C2", "17172C1"])))
+    state.add_issue(IssueEntry(
+        label="release", stage=STAGE_IFF, round_no="1",
+        members=_banded(["17172C1"], rev="0")))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        header, rows = _sheet(wb["On Hold"])
+    finally:
+        wb.close()
+
+    seq = header.index("Sequence")
+    # 17172C1 shipped in the same release, so it never went on hold at all.
+    assert [r[0] for r in rows] == ["17172C2", "17173R1"]
+    assert [r[seq] for r in rows] == ["SEQ 172", "SEQ 173"]
+
+
+def test_the_change_log_carries_and_orders_by_sequence(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1",
+                               members=_banded(["17172C1"])))
+    state.add_issue(IssueEntry(
+        label="two", stage=STAGE_IFA, round_no="2",
+        members=_banded(["17172C1", "17173R9", "17172C4"])))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        header, rows = _sheet(wb["Change Log"])
+    finally:
+        wb.close()
+
+    seq, name = header.index("Sequence"), header.index("Member Name")
+    added = [(r[seq], r[name]) for r in rows if r[3] == "Added"]
+    assert added == [("SEQ 172", "17172C4"), ("SEQ 173", "17173R9")]
+
+
+def test_both_flat_sheets_stay_filterable(tmp_path: Path):
+    """Sequence is a column, not a heading row, so the filter survives.
+
+    These two sheets are looked things up in - "which of these still has no
+    reason?" - and heading rows would cost them that.
+    """
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1",
+                               members=_banded(["17172C1", "17173R1"])))
+    state.add_issue(IssueEntry(label="two", stage=STAGE_IFF, round_no="1",
+                               members=_banded(["17172C1"], rev="0")))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        for sheet in ("On Hold", "Change Log"):
+            assert wb[sheet].auto_filter.ref, f"{sheet} lost its filter"
+            assert "Sequence" in [c.value for c in wb[sheet][3]]
+    finally:
+        wb.close()

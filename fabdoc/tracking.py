@@ -280,6 +280,13 @@ class PackageChain:
     member_info: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
     # Every key that has appeared in some IFF release, for the by-sequence view.
     released_keys: set = field(default_factory=set)
+    # member identity -> its band, so the flat sheets can order by sequence
+    # without re-parsing every mark they print.
+    band_by_ident: dict = field(default_factory=dict)
+
+    def band_of(self, ident: str) -> tuple[str, str]:
+        """The band a member identity sits in, ("", "") when it has none."""
+        return self.band_by_ident.get(ident, ("", ""))
 
     @property
     def baseline_label(self) -> str:
@@ -428,6 +435,7 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
             # The latest issue is the current spelling of the mark.
             name = info.get("name") or split_member_id(ident)[1]
             kind, band = band_for_mark(name, cfg.profile)
+            chain.band_by_ident[ident] = (kind, band)
             chain.member_info[key] = {
                 "name": name,
                 "zone": info.get("zone", "") or chain.member_info.get(key, {}).get("zone", ""),
