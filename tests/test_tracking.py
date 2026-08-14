@@ -334,3 +334,77 @@ def test_reasons_can_be_keyed_by_identity_or_by_mark():
 
     apply_reasons(state, {"Assembly::A2": "Client hold"})
     assert build_chain(state).holds["Assembly::A2"].reason == "Client hold"
+
+
+# --------------------------------------------------------------- mark casing
+
+
+def _members(names, category="Part", rev="0"):
+    from collections import OrderedDict
+    return OrderedDict(
+        (n, {"name": n, "rev": rev, "zone": "", "category": category}) for n in names
+    )
+
+
+def test_a_case_change_between_issues_is_the_same_member():
+    """Marks are now recorded as drawn, and existing trackers hold them upper.
+
+    An issue added after that change must chain onto the ones before it, not
+    read as the old member removed and a new one added.
+    """
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["17CH104", "17HSP1"])))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_members(["17ch104"])))
+    chain = build_chain(state)
+    step = chain.steps[-1]
+
+    assert len(step.released) == 1
+    assert not step.added, "a case change read as a different member"
+    assert len(step.on_hold) == 1
+
+
+def test_a_case_change_does_not_duplicate_the_history_row():
+    """Member History is keyed by comparison key, so one member is one row."""
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["17CH104"])))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_members(["17ch104"])))
+    chain = build_chain(state)
+
+    assert len(chain.history) == 1
+    # The most recent spelling is what the sheet shows.
+    assert list(chain.member_info.values())[0]["name"] == "17ch104"
+
+
+def test_a_hold_reason_survives_a_case_change():
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["17ch104", "17hsp1"])))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_members(["17ch104"])))
+    chain = build_chain(state)
+    hold = chain.outstanding[0]
+    assert hold.member_name == "17hsp1"
+
+    apply_reasons(state, {hold.ident: "awaiting material"})
+    assert build_chain(state).outstanding[0].reason == "awaiting material"
+
+
+def test_the_history_sheet_lists_each_member_once(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["17CH104", "17HSP1"])))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_members(["17ch104"])))
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+
+    wb = load_workbook(out)
+    try:
+        sheet = next(n for n in wb.sheetnames if "History" in n)
+        names = [r[0] for r in wb[sheet].iter_rows(min_row=4, values_only=True) if r and r[0]]
+    finally:
+        wb.close()
+    assert sorted(names) == ["17HSP1", "17ch104"]

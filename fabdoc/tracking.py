@@ -255,7 +255,12 @@ class PackageChain:
     issues: list[IssueEntry] = field(default_factory=list)
     steps: list[ChainStep] = field(default_factory=list)
     holds: "OrderedDict[str, HoldRecord]" = field(default_factory=OrderedDict)
+    # comparison key -> {issue label: revision}. Keyed by the comparison key
+    # rather than the mark as written, so a member the detailer spelled
+    # "17CH104" in one issue and "17ch104" in the next is one row, not two.
     history: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
+    # comparison key -> the member as most recently drawn: name, zone, category.
+    member_info: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
 
     @property
     def baseline_label(self) -> str:
@@ -390,8 +395,15 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
     for entry in state.issues:
         current = _keys(entry, cfg)
 
-        for name, info in entry.members.items():
-            chain.history.setdefault(name, {})[entry.label] = info.get("rev", "")
+        for key, ident in current.items():
+            info = entry.members.get(ident, {})
+            chain.history.setdefault(key, {})[entry.label] = info.get("rev", "")
+            # The latest issue is the current spelling of the mark.
+            chain.member_info[key] = {
+                "name": info.get("name") or split_member_id(ident)[1],
+                "zone": info.get("zone", "") or chain.member_info.get(key, {}).get("zone", ""),
+                "category": info.get("category", ""),
+            }
 
         step = ChainStep(
             old_label=previous.label if previous else "",

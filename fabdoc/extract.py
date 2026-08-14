@@ -162,8 +162,11 @@ def _largest_mark(
                     token = token.strip(" .,:;()[]")
                     if not token or token.upper() in stopwords:
                         continue
+                    # Tested upper, stored as drawn: single-part marks are
+                    # lower case on the sheet ("17ch104") and the register has
+                    # to read back the way the detailer wrote them.
                     if shape.match(token.upper()):
-                        best_text, best_size = token.upper(), size
+                        best_text, best_size = token, size
                         break
     return best_text
 
@@ -326,7 +329,14 @@ def extract_drawing(
                         value = _first_match(page_text, pats, accept)
                         source = SOURCE_PAGE
                     if value:
-                        clean = _tidy_seq(value) if label == "seq" else value.strip().upper()
+                        if label == "seq":
+                            clean = _tidy_seq(value)
+                        elif label == "member":
+                            # The mark is an identifier, not a heading - it is
+                            # recorded exactly as the drawing carries it.
+                            clean = value.strip()
+                        else:
+                            clean = value.strip().upper()
                         setattr(record, attr, clean)
                         setattr(record, src_attr, source)
 
@@ -342,7 +352,7 @@ def extract_drawing(
     # Tier 4: the filename.
     from_name = parse_filename(path.stem, prof)
     if not record.member_name and from_name.get("member"):
-        candidate = _reject_stopword(from_name["member"].strip().upper(), stopwords)
+        candidate = _reject_stopword(from_name["member"].strip(), stopwords)
         if candidate:
             record.member_name = candidate
             record.member_source = SOURCE_FILENAME

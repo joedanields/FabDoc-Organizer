@@ -738,3 +738,48 @@ def test_a_label_pattern_the_engineer_wrote_is_kept(tmp_path: Path):
     path = tmp_path / "settings.json"
     save_settings(settings, path)
     assert load_settings(path).profile.member_patterns == mine
+
+
+# ------------------------------------------------------------- mark casing
+
+
+@pytest.mark.parametrize("mark", ["17ch104", "17hsp1", "17a24", "17172C172", "17CH104"])
+def test_the_mark_is_recorded_as_the_drawing_carries_it(tmp_path: Path, mark: str):
+    """A mark is an identifier, not a heading.
+
+    Single-part drawings are marked in lower case and assemblies in upper, in
+    the same package. Folding everything to upper case made the register
+    disagree with the drawing it came from.
+    """
+    pdf = make_drawing(tmp_path / f"{mark}.pdf", mark, revision=0, big_mark=True,
+                       labelled=False)
+    assert extract_drawing(pdf).member_name == mark
+
+
+def test_case_is_preserved_from_a_label_and_from_the_filename(tmp_path: Path):
+    labelled = make_drawing(tmp_path / "labelled.pdf", "17ch55", revision="A")
+    assert extract_drawing(labelled).member_name == "17ch55"
+
+    blank = make_drawing(tmp_path / "17hsp274  - Rev 0.pdf", "x", blank=True)
+    from_name = extract_drawing(blank)
+    assert from_name.member_name == "17hsp274"
+    assert from_name.member_source == SOURCE_FILENAME
+
+
+def test_a_revision_is_still_upper_cased(tmp_path: Path):
+    """Revisions are a sequence, not an identity - "a" and "A" are one rev."""
+    pdf = make_drawing(tmp_path / "r.pdf", "17ch55", revision="b")
+    assert extract_drawing(pdf).revision == "B"
+
+
+def test_mixed_case_marks_do_not_split_a_band(tmp_path: Path):
+    """Grouping is case-insensitive even though display is not."""
+    root = tmp_path / "Parts - 2026-07-22"
+    for mark in ["17ch1", "17CH2", "17Ch3"]:
+        make_drawing(root / "Single Part Drawings" / f"{mark}.pdf", mark,
+                     revision=0, big_mark=True, labelled=False)
+    cat = build_register(root).categories[0]
+    bands = cat.band_groups("")
+    assert [b for b, _ in bands] == [("type", "CH")]
+    assert len(bands[0][1]) == 3
+    assert sorted(r.member_name for r in bands[0][1]) == ["17CH2", "17Ch3", "17ch1"]

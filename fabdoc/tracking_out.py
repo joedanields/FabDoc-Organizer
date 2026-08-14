@@ -134,20 +134,14 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
     _title(ws, heading, max(len(columns), 3))
 
     _headers(ws, columns, 3)
-    held = {h.ident for h in chain.outstanding}
+    held = {h.member_key for h in chain.outstanding}
 
     row = 4
     for member in (members if members is not None else list(chain.history)):
         per_issue = chain.history.get(member, {})
-        zone = ""
-        name = split_member_id(member)[1]
-        for entry in chain.issues:
-            info = entry.members.get(member)
-            if info:
-                name = info.get("name") or name
-                if info.get("zone"):
-                    zone = info["zone"]
-                    break
+        info = chain.member_info.get(member, {})
+        name = info.get("name") or split_member_id(member)[1]
+        zone = info.get("zone", "")
         cells: list[object] = [name, zone]
         for label in labels:
             cells.append(per_issue.get(label, ""))
