@@ -639,7 +639,8 @@ def test_parts_and_assemblies_share_one_tracker_workbook(local: TestClient,
     wb = load_workbook(tracker)
     try:
         histories = [n for n in wb.sheetnames if n.startswith("History")]
-        assert histories == ["History - Structural", "History - Erection",
-                             "History - Part"]
+        # Erection is not tracked: it shows where assemblies go on site, so it
+        # has no approved scope to release and nothing to hold.
+        assert histories == ["History - Structural", "History - Part"]
     finally:
         wb.close()

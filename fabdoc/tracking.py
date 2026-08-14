@@ -98,15 +98,23 @@ def split_member_id(ident: str) -> tuple[str, str]:
     return "", ident
 
 
-def snapshot_register(register: Register) -> "OrderedDict[str, dict[str, str]]":
+def is_tracked(category: str, cfg: AppSettings) -> bool:
+    """Does the tracker follow this drawing category at all?"""
+    skip = {c.strip().lower() for c in cfg.untracked_categories if c.strip()}
+    return (category or "").strip().lower() not in skip
+
+
+def snapshot_register(register: Register,
+                      settings: AppSettings | None = None) -> "OrderedDict[str, dict[str, str]]":
     """Reduce a register to the member data the chain needs.
 
     Storing this rather than the register itself is what lets the tracker rebuild
     the whole history without re-scanning thousands of PDFs.
     """
+    cfg = settings or AppSettings()
     out: "OrderedDict[str, dict[str, str]]" = OrderedDict()
     for rec in register.all_records():
-        if not rec.member_name:
+        if not rec.member_name or not is_tracked(rec.category, cfg):
             continue
         ident = member_id(rec.category, rec.member_name)
         if ident in out:
@@ -255,6 +263,9 @@ class PackageChain:
     issues: list[IssueEntry] = field(default_factory=list)
     steps: list[ChainStep] = field(default_factory=list)
     holds: "OrderedDict[str, HoldRecord]" = field(default_factory=OrderedDict)
+    # issue label -> number of tracked members, which is not entry.total once a
+    # category is excluded from tracking.
+    totals: dict[str, int] = field(default_factory=dict)
     # comparison key -> {issue label: revision}. Keyed by the comparison key
     # rather than the mark as written, so a member the detailer spelled
     # "17CH104" in one issue and "17ch104" in the next is one row, not two.
@@ -368,6 +379,8 @@ def _keys(entry: IssueEntry, cfg: AppSettings) -> "OrderedDict[str, str]":
     out: "OrderedDict[str, str]" = OrderedDict()
     for ident, info in entry.members.items():
         category = info.get("category") or split_member_id(ident)[0]
+        if not is_tracked(category, cfg):
+            continue
         key = normalise(info.get("name") or split_member_id(ident)[1], cfg)
         if not key:
             continue
@@ -395,6 +408,7 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
     for entry in state.issues:
         current = _keys(entry, cfg)
 
+        chain.totals[entry.label] = len(current)
         for key, ident in current.items():
             info = entry.members.get(ident, {})
             chain.history.setdefault(key, {})[entry.label] = info.get("rev", "")

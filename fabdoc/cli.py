@@ -146,7 +146,7 @@ def _track_issue(args: argparse.Namespace, settings, folder: Path, register) -> 
         round_no=args.round or register.meta.issue_no,
         date_text=register.meta.date_display,
         folder=str(folder),
-        members=snapshot_register(register),
+        members=snapshot_register(register, settings),
     ))
 
     chain = build_chain(state, settings)

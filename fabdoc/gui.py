@@ -1081,7 +1081,7 @@ class FabDocApp(ttk.Frame):
             round_no=self.round_var.get().strip() or reg.meta.issue_no,
             date_text=reg.meta.date_display,
             folder=str(folder),
-            members=snapshot_register(reg),
+            members=snapshot_register(reg, settings),
         ))
 
         settings = self._settings_from_ui()

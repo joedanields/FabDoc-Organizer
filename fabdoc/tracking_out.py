@@ -30,6 +30,8 @@ _IFA_FILL = PatternFill("solid", fgColor="DDEBF7")    # blue: still in approval
 _IFF_FILL = PatternFill("solid", fgColor="E2EFDA")    # green: released to shop
 _HOLD_FILL = PatternFill("solid", fgColor="F8CBAD")   # orange: not shipped
 _NEW_FILL = PatternFill("solid", fgColor="FFF2CC")    # amber: new this issue
+# "H" carries the on-hold state in text as well as in colour.
+_HOLD_FONT = Font(bold=True, size=10, color="843C0C")
 
 
 def _title(ws: Worksheet, text: str, width: int) -> None:
@@ -82,8 +84,8 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
         is_iff = entry.stage == STAGE_IFF
         values = [
             idx, entry.code, entry.stage, entry.round_no, entry.label,
-            entry.date_text, entry.total,
-            len(step.added) if step else entry.total,
+            entry.date_text, chain.totals.get(entry.label, entry.total),
+            len(step.added) if step else chain.totals.get(entry.label, entry.total),
             len(step.revised) if step else 0,
             len(step.removed) if step else 0,
             len(step.released) if step and is_iff else "",
@@ -112,6 +114,40 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
         [5, 10, 8, 8, 46, 14, 10, 8, 9, 10, 10, 9, 30], start=1
     ):
         ws.column_dimensions[get_column_letter(idx)].width = width
+
+
+_LEGEND = [
+    ("A", "Approval", "ifa"),
+    ("B", "Re-Approval", "ifa"),
+    ("H", "On Hold", "hold"),
+    ("0", "Released For Fabrication", "iff"),
+    ("1,2..", "Revised As Noted", "iff"),
+]
+
+_LEGEND_FILLS = {"ifa": _IFA_FILL, "iff": _IFF_FILL, "hold": _HOLD_FILL}
+
+
+def _write_legend(ws: Worksheet, column: int, row: int) -> None:
+    """What the letters in the grid mean, beside the grid that uses them.
+
+    The sheet is read by people who did not generate it, and a bare "B" or "0"
+    in a coloured cell is not self-explanatory.
+    """
+    head = ws.cell(row=row, column=column, value="LEGEND")
+    head.font = _LABEL_FONT
+    row += 1
+    for code, meaning, kind in _LEGEND:
+        key = ws.cell(row=row, column=column, value=code)
+        key.fill = _LEGEND_FILLS[kind]
+        key.border = _BORDER
+        key.alignment = _CENTER
+        key.font = _HOLD_FONT if kind == "hold" else _VALUE_FONT
+        text = ws.cell(row=row, column=column + 1, value=meaning)
+        text.font = _VALUE_FONT
+        text.alignment = _LEFT
+        row += 1
+    ws.column_dimensions[get_column_letter(column)].width = 7
+    ws.column_dimensions[get_column_letter(column + 1)].width = 26
 
 
 def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
@@ -154,8 +190,15 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
                 if value:
                     cell.fill = _IFF_FILL if entry.stage == STAGE_IFF else _IFA_FILL
                 elif entry.stage == STAGE_IFF and member in held:
+                    # Say it, do not just colour it: a printed tracker and a
+                    # colour-blind reader both lose a fill, and "on hold" is the
+                    # one state the shop floor acts on.
+                    cell.value = "H"
                     cell.fill = _HOLD_FILL
+                    cell.font = _HOLD_FONT
         row += 1
+
+    _write_legend(ws, len(columns) + 2, 3)
 
     ws.freeze_panes = ws.cell(row=4, column=3)
     if row > 4:

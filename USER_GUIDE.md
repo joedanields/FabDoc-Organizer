@@ -459,6 +459,30 @@ web/data/
   trackers/   one tracker + chain state per project
 ```
 
+### 6.3b Reading the Member History grid
+
+One member per row, one issue per column, the revision in the cell. A legend
+sits to the right of every history sheet:
+
+| Cell | Meaning |
+| --- | --- |
+| `A` | Approval |
+| `B` | Re-Approval |
+| `H` | On Hold |
+| `0` | Released For Fabrication |
+| `1, 2 …` | Revised As Noted |
+
+**`H` is written into the cell**, not just coloured orange — a printed tracker
+loses the fill, and on hold is the one state the shop floor acts on.
+
+An empty cell means the member was not in that issue and nothing is owed: either
+it already shipped in another release, or it was dropped at re-approval.
+
+**Erection drawings are not tracked.** An erection drawing shows where an
+assembly goes on site; it is not a fabricated item, so it has no approved scope
+to release and nothing to hold. It still appears in the register. Change
+`untracked_categories` in `~/.fabdoc/settings.json` to follow a different set.
+
 ### 6.4 The chain state file
 
 Beside every tracker sits a `.chain.json` holding each issue's members, revisions

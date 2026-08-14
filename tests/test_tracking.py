@@ -224,8 +224,10 @@ def test_member_history_shows_a_revision_per_issue(tmp_path: Path):
     out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
     wb = load_workbook(out)
     ws = wb["History - Assembly"]
-    assert [c.value for c in ws[3]] == ["Member Name", "Zone", "IFA-1", "IFA-2"]
-    assert [c.value for c in ws[4]][:1] + [c.value for c in ws[4]][2:] == ["A1", "A", "B"]
+    # The legend sits to the right of the table, so read the table's columns.
+    assert [c.value for c in ws[3][:4]] == ["Member Name", "Zone", "IFA-1", "IFA-2"]
+    row = [c.value for c in ws[4][:4]]
+    assert row[0] == "A1" and row[2:] == ["A", "B"]      # zone is unset here
     wb.close()
 
 
@@ -318,10 +320,8 @@ def test_every_category_shares_one_tracker_file(tmp_path: Path):
     try:
         assert wb.sheetnames == ["Tracker", "History - Assembly", "History - Part",
                                  "Change Log"]
-        assert [r[0] for r in wb["History - Part"].iter_rows(min_row=4,
-                                                             values_only=True)] == ["P9"]
-        assert sorted(r[0] for r in wb["History - Assembly"].iter_rows(
-            min_row=4, values_only=True)) == ["C1", "C2"]
+        assert _member_names(wb["History - Part"]) == ["P9"]
+        assert sorted(_member_names(wb["History - Assembly"])) == ["C1", "C2"]
     finally:
         wb.close()
 
@@ -337,6 +337,11 @@ def test_reasons_can_be_keyed_by_identity_or_by_mark():
 
 
 # --------------------------------------------------------------- mark casing
+
+
+def _member_names(ws) -> list[str]:
+    """Member column only - the legend to the right also occupies these rows."""
+    return [r[0] for r in ws.iter_rows(min_row=4, values_only=True) if r and r[0]]
 
 
 def _members(names, category="Part", rev="0"):
@@ -408,3 +413,96 @@ def test_the_history_sheet_lists_each_member_once(tmp_path: Path):
     finally:
         wb.close()
     assert sorted(names) == ["17HSP1", "17ch104"]
+
+
+# ----------------------------------------------- legend, H, untracked kinds
+
+
+def test_an_on_hold_cell_says_H_as_well_as_being_orange(tmp_path: Path):
+    """A printed tracker loses the fill, and so does a colour-blind reader.
+
+    On hold is the one state the shop floor acts on, so it is written down.
+    """
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["A1", "A2"], category="Assembly")))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_members(["A1"], category="Assembly")))
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+
+    wb = load_workbook(out)
+    try:
+        ws = wb["History - Assembly"]
+        rows = {r[0]: r[1:4] for r in ws.iter_rows(min_row=4, values_only=True) if r[0]}
+        assert rows["A1"][2] == "0", "released member keeps its revision"
+        assert rows["A2"][2] == "H", "held member is marked H"
+    finally:
+        wb.close()
+
+
+def test_the_history_sheet_carries_a_legend(tmp_path: Path):
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["A1"], category="Assembly")))
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+
+    wb = load_workbook(out)
+    try:
+        ws = wb["History - Assembly"]
+        seen = {c.value for row in ws.iter_rows() for c in row if c.value}
+        assert "LEGEND" in seen
+        for meaning in ("Approval", "Re-Approval", "On Hold",
+                        "Released For Fabrication", "Revised As Noted"):
+            assert meaning in seen, meaning
+    finally:
+        wb.close()
+
+
+def test_erection_drawings_are_not_tracked(tmp_path: Path):
+    """An erection drawing shows where an assembly goes; it is not fabricated.
+
+    It has no approved scope to release and nothing to hold, so counting it put
+    site drawings into the released and on-hold numbers the shop reads.
+    """
+    members = _members(["A1"], category="Assembly")
+    members.update(_members(["E1", "E2"], category="Erection"))
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=members))
+    chain = build_chain(state)
+
+    assert list(chain.history) == ["Assembly::A1"]
+    assert chain.totals["approval"] == 1, "the Drawings count follows what is tracked"
+
+    out = write_tracker(chain, tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        assert "History - Erection" not in wb.sheetnames
+    finally:
+        wb.close()
+
+
+def test_dropping_erection_does_not_report_it_as_removed():
+    """Existing chains hold erection drawings; excluding them is not a deletion."""
+    first = _members(["A1"], category="Assembly")
+    first.update(_members(["E1", "E2"], category="Erection"))
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1", members=first))
+    state.add_issue(IssueEntry(label="two", stage=STAGE_IFA, round_no="2",
+                               members=_members(["A1"], category="Assembly")))
+    step = build_chain(state).steps[-1]
+    assert step.removed == [], "erection drawings read as removed"
+    assert step.verdict == "no change"
+
+
+def test_the_untracked_list_is_editable():
+    from fabdoc.config import AppSettings
+
+    cfg = AppSettings()
+    cfg.untracked_categories = ["Part"]
+    members = _members(["A1"], category="Assembly")
+    members.update(_members(["P1"], category="Part"))
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1",
+                               members=members))
+    assert list(build_chain(state, cfg).history) == ["Assembly::A1"]

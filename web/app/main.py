@@ -607,7 +607,7 @@ def _track(register, root: Path, stage: str, round_no: str, settings,
         label=root.name, stage=stage,
         round_no=round_no or register.meta.issue_no,
         date_text=register.meta.date_display, folder=str(root),
-        members=snapshot_register(register),
+        members=snapshot_register(register, settings),
     ))
     chain = build_chain(state, settings)
     save_state(state, state_path_for(tracker))

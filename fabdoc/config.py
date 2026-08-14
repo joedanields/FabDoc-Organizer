@@ -231,6 +231,12 @@ class AppSettings:
     # under a banded sequence header, restarting S.No per sequence.
     group_by_zone: bool = True
 
+    # Categories the package tracker ignores. An erection drawing shows where
+    # assemblies go on site - it is not a fabricated item, so it has no approved
+    # scope to release and nothing to hold. Tracking it put site drawings in the
+    # released and on-hold counts the shop reads.
+    untracked_categories: list[str] = field(default_factory=lambda: ["Erection"])
+
     # Default output folder for generated registers (empty = project folder)
     default_output_folder: str = ""
 
@@ -250,6 +256,7 @@ class AppSettings:
             "compare_strip_leading_zeros": self.compare_strip_leading_zeros,
             "include_source_column": self.include_source_column,
             "group_by_zone": self.group_by_zone,
+            "untracked_categories": self.untracked_categories,
             "default_output_folder": self.default_output_folder,
             "default_tracker_folder": self.default_tracker_folder,
         }
