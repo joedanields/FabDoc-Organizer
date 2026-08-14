@@ -284,8 +284,16 @@ GUI or `--column` on the CLI.
    error. Requires a quantity column and a decision about what a mismatch means.
 6. **OCR fallback** for scanned packages. Only if step 1 reveals scanned PDFs.
    Significant scope — new dependency, much slower, needs its own accuracy story.
-7. **`.gitattributes`** to pin line endings if a non-Windows machine ever joins.
-   Git currently warns about CRLF on every commit (harmless).
+7. ~~**`.gitattributes`** to pin line endings.~~ **Done.** `*.bat` and `*.cmd`
+   are pinned to `eol=crlf` so a launcher is CRLF whatever a machine has
+   `core.autocrlf` set to — a second workstation checked them out as LF. Keep
+   `* text=auto` above the batch rules: the last matching pattern wins.
+
+   Measured while doing it, in case it saves the next person the detour:
+   cmd.exe **does** tolerate LF for multi-line `set "X=%X% ..."` accumulation and
+   for `^` line continuation. If a build ever comes out with only the last
+   `SKIP=` line applied, line endings are not the cause — check that the running
+   process was actually started from the current version of the file.
 
 ---
 
