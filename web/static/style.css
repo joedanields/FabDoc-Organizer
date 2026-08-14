@@ -20,9 +20,36 @@
   --amber: #fff2cc;
   --orange: #f8cbad;
   --ok: #e2efda;
-  --line: #d4d4d4;
-  --ink: #222;
-  --muted: #666;
+
+  /* Surfaces and ink. One page ground, one card ground, one line weight, so
+     nothing has to be decided twice. */
+  --bg: #eef1f6;
+  --surface: #fff;
+  --surface-sunk: #f7f9fc;
+  --line: #dde3ec;
+  --line-strong: #c3ccdb;
+  --ink: #16202f;
+  --muted: #5b6779;
+  --faint: #8592a5;
+
+  /* Status. Reserved for state - never borrowed for decoration - and always
+     carried by a word or an icon as well as the colour. */
+  --good: #1a6b39;
+  --good-bg: #e8f5ec;
+  --warn: #8a5a00;
+  --warn-bg: #fdf3e0;
+  --bad: #a3161f;
+  --bad-bg: #fdeced;
+
+  --r-sm: 4px;
+  --r-md: 7px;
+  --r-lg: 11px;
+  --shadow-1: 0 1px 2px rgba(16, 32, 64, .06), 0 1px 1px rgba(16, 32, 64, .04);
+  --shadow-2: 0 4px 14px -4px rgba(16, 32, 64, .16);
+  --shadow-3: 0 24px 60px -12px rgba(0, 20, 60, .40);
+
+  --wrap: 1180px;
+  --ring: 0 0 0 3px rgba(0, 45, 130, .22);
 }
 
 * { box-sizing: border-box; }
@@ -32,34 +59,54 @@
    the page from load. Author-level and !important so `hidden` always wins. */
 [hidden] { display: none !important; }
 
+html { scroll-behavior: smooth; }
+
 body {
   margin: 0;
-  font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
   color: var(--ink);
-  background: #f4f6f8;
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+/* A single content measure, used by the header, the masthead and every panel,
+   so the logo, the page title and the first field all start on one line down
+   the left edge however wide the monitor is. */
+.wrap { max-width: var(--wrap); margin: 0 auto; width: 100%; }
+
+/* --- header -------------------------------------------------------------- */
 
 /* The logo is printed artwork on a solid white ground, so the masthead is white
    and the brand colours are carried by everything around it. */
 header {
-  background: #fff;
-  padding: 10px 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px 24px;
+  background: var(--surface);
   border-bottom: 3px solid var(--brand-red);
+  padding: 0 24px;
+  position: sticky; top: 0; z-index: 30;
 }
-header .brand { height: 42px; width: auto; max-width: 100%; }
+header .wrap {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px 24px; padding: 10px 0;
+}
+header .brand { height: 42px; width: auto; max-width: 100%; display: block; }
 
-/* The four occasional screens. Icons, not a tab strip: a tab strip made
-   generating a register look like one option out of five. */
+/* The occasional screens. Icons, not a tab strip: a tab strip made generating
+   a register look like one option out of five. */
 .tools { display: flex; gap: 4px; flex-wrap: wrap; }
 .tool {
   display: inline-flex; align-items: center; gap: 7px;
   background: none; border: 1px solid transparent; color: var(--brand-navy);
-  padding: 7px 12px; border-radius: 5px; font-size: 12.5px; cursor: pointer;
+  padding: 8px 12px; border-radius: var(--r-md); font-size: 12.5px;
+  font-weight: 500; cursor: pointer;
+  transition: background .13s ease, border-color .13s ease;
 }
 .tool svg {
   width: 17px; height: 17px; flex: none;
@@ -70,213 +117,446 @@ header .brand { height: 42px; width: auto; max-width: 100%; }
 .tool:active { background: #e3e9f8; }
 
 /* Naming the job, so the page says what it is now the tabs are gone. */
-.masthead { background: var(--brand-navy); color: #fff; padding: 18px 24px 20px; }
-.masthead-inner { max-width: 1180px; }
-.masthead h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: .2px; }
-.masthead p { margin: 4px 0 0; font-size: 13px; color: #c3d0ee; }
-.masthead .version { display: none; }
+.masthead {
+  background: linear-gradient(180deg, var(--brand-navy) 0%, var(--brand-navy-dark) 100%);
+  color: #fff; padding: 20px 24px 22px;
+}
+.masthead h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .2px; }
+.masthead p { margin: 5px 0 0; font-size: 13px; color: #c3d0ee; max-width: 68ch; }
+.masthead .version {
+  display: inline-block; margin-top: 10px; padding: 2px 9px;
+  border-radius: 999px; font-size: 11px; letter-spacing: .3px;
+  background: rgba(255, 255, 255, .13); color: #dbe4f7;
+}
 
 /* --- the sheet ----------------------------------------------------------- */
 
 .sheet-host {
-  position: fixed; inset: 0; z-index: 40;
+  position: fixed; inset: 0; z-index: 60;
   background: rgba(10, 20, 50, .45);
   display: flex; justify-content: center;
   padding: 3vh 16px;
   overflow: auto;
+  animation: fade .14s ease;
 }
-body.sheet-open { overflow: hidden; }
+body.sheet-open, body.modal-open { overflow: hidden; }
 .sheet {
-  background: #f4f6f8;
-  border-radius: 8px;
-  width: min(1180px, 100%);
+  background: var(--bg);
+  border-radius: var(--r-lg);
+  width: min(var(--wrap), 100%);
   align-self: flex-start;
   max-height: 94vh;
   display: flex; flex-direction: column;
-  box-shadow: 0 24px 60px -12px rgba(0, 20, 60, .45);
+  box-shadow: var(--shadow-3);
   overflow: hidden;
+  animation: rise .16s ease;
 }
 .sheet-bar {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 16px; padding: 12px 18px;
-  background: #fff; border-bottom: 2px solid var(--brand-red);
+  gap: 16px; padding: 13px 18px;
+  background: var(--surface); border-bottom: 2px solid var(--brand-red);
 }
 .sheet-bar h2 { margin: 0; font-size: 16px; color: var(--brand-navy); font-weight: 600; }
 .sheet-body { overflow: auto; padding: 4px 0 0; }
-.sheet-body .panel { padding-top: 16px; }
-button.ghost { background: #fff; border-color: var(--line); }
+.sheet-body .panel { padding-top: 18px; }
+button.ghost { background: var(--surface); border-color: var(--line-strong); }
 
-@media (max-width: 620px) {
-  header { justify-content: center; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+@media (max-width: 640px) {
+  header .wrap { justify-content: center; }
   .tool span { display: none; }
   .tool { padding: 9px; }
 }
 
-.panel { display: none; padding: 20px 24px 60px; max-width: 1180px; }
+.panel { display: none; padding: 22px 24px 40px; max-width: var(--wrap); margin: 0 auto; }
 .panel.active { display: block; }
 
-fieldset {
-  border: 1px solid var(--line); background: #fff;
-  border-radius: 6px; padding: 14px 16px; margin: 0 0 16px;
-}
-legend { color: var(--navy); font-weight: 600; padding: 0 6px; }
+/* --- cards --------------------------------------------------------------- */
 
-.hint { color: var(--muted); font-size: 12.5px; margin: 6px 0; }
+fieldset {
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: var(--r-md); padding: 4px 18px 16px; margin: 0 0 16px;
+  box-shadow: var(--shadow-1);
+  min-width: 0;
+}
+legend {
+  color: var(--navy); font-weight: 600; padding: 0 8px 0 6px;
+  font-size: 13.5px; letter-spacing: .2px;
+}
+fieldset > :last-child { margin-bottom: 0; }
+
+.hint { color: var(--muted); font-size: 12.5px; margin: 7px 0; max-width: 82ch; }
+.hint code { background: var(--surface-sunk); padding: 1px 5px; border-radius: var(--r-sm); }
 .status { color: var(--muted); font-size: 12.5px; margin-left: 10px; }
-.status.bad { color: #b00020; font-weight: 600; }
-.status.good { color: #1e7b34; font-weight: 600; }
+.status.bad { color: var(--bad); font-weight: 600; }
+.status.good { color: var(--good); font-weight: 600; }
+.status:empty { display: none; }
+
+/* --- controls ------------------------------------------------------------ */
 
 button {
-  border: 1px solid var(--line); background: #fff; color: var(--ink);
-  padding: 7px 14px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
+  padding: 7px 14px; border-radius: var(--r-sm); cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 500;
+  transition: background .13s ease, border-color .13s ease, box-shadow .13s ease;
+  white-space: nowrap;
 }
-button:hover { background: #eef3f8; }
+button:hover:not(:disabled) { background: #eef3f8; border-color: #9fb0c8; }
+button:active:not(:disabled) { background: #e4ecf4; }
 button.primary {
   background: var(--brand-navy); border-color: var(--brand-navy); color: #fff;
+  box-shadow: var(--shadow-1);
 }
-button.primary:hover { background: var(--brand-navy-dark); border-color: var(--brand-navy-dark); }
-button:disabled { opacity: .5; cursor: not-allowed; }
-button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--brand-red); outline-offset: 1px;
+button.primary:hover:not(:disabled) {
+  background: var(--brand-navy-dark); border-color: var(--brand-navy-dark);
+}
+button.big { padding: 10px 20px; font-size: 14px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* Anything running says so on the button that started it, so the pointer does
+   not have to travel to a status line to find out whether the click landed. */
+button.busy { position: relative; color: transparent !important; pointer-events: none; }
+button.busy::after {
+  content: ""; position: absolute; inset: 0; margin: auto;
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent;
+  color: #fff; animation: spin .7s linear infinite;
+}
+button.busy:not(.primary)::after { color: var(--brand-navy); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+:focus-visible {
+  outline: 2px solid var(--brand-navy); outline-offset: 2px; border-radius: 3px;
 }
 
-input[type=text], select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; }
-label.inline { margin-right: 20px; display: inline-flex; align-items: center; gap: 6px; }
+input[type=text], input[type=file], select, textarea {
+  font: inherit; font-size: 13px; color: var(--ink);
+  padding: 7px 9px; border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm); background: var(--surface);
+  transition: border-color .13s ease, box-shadow .13s ease;
+  max-width: 100%;
+}
+input[type=text]:hover:not(:disabled), select:hover:not(:disabled) { border-color: #9fb0c8; }
+input[type=text]:focus, select:focus, textarea:focus {
+  border-color: var(--brand-navy); box-shadow: var(--ring); outline: none;
+}
+input:disabled, select:disabled { background: var(--surface-sunk); color: var(--faint); }
+input[type=file] { padding: 6px; background: var(--surface-sunk); max-width: 100%; }
+input[type=checkbox], input[type=radio] { accent-color: var(--brand-navy); width: 15px; height: 15px; }
+
+label.inline {
+  margin-right: 20px; display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer;
+}
 label.block { display: block; margin: 10px 0; }
-label.block input[type=text] { display: block; margin-top: 4px; width: 320px; }
+label.block input[type=text] { display: block; margin-top: 4px; width: min(420px, 100%); }
 
 .grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 12px; }
-.grid label { display: flex; flex-direction: column; font-size: 12.5px; color: var(--muted); gap: 4px; }
+.grid label {
+  display: flex; flex-direction: column; font-size: 12px; color: var(--muted);
+  gap: 4px; font-weight: 500; letter-spacing: .2px;
+}
 .grid input { width: 100%; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 460px) { .grid { grid-template-columns: 1fr; } }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* --- the stage choice ---------------------------------------------------- */
+
+/* IFA and IFF are eight characters that decide whether this issue sets the
+   approved baseline or ships against it, and the wrong one rewrites the
+   baseline silently. Two labelled cards, so the choice is read rather than
+   recognised. */
+.seg { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 14px; }
+.segopt {
+  flex: 1 1 260px; display: flex; align-items: flex-start; gap: 10px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-md);
+  padding: 11px 13px; cursor: pointer; background: var(--surface);
+  transition: border-color .13s ease, background .13s ease, box-shadow .13s ease;
+}
+.segopt:hover { border-color: #9fb0c8; background: var(--surface-sunk); }
+.segopt:has(input:checked) {
+  border-color: var(--brand-navy); background: #f2f6fd;
+  box-shadow: inset 0 0 0 1px var(--brand-navy);
+}
+.segopt:has(input:focus-visible) { outline: 2px solid var(--brand-navy); outline-offset: 2px; }
+.segopt input { margin-top: 2px; flex: none; }
+.segtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.segtext .code { font-weight: 700; color: var(--navy); letter-spacing: .4px; }
+.segtext .what { font-size: 12.5px; color: var(--muted); }
+
+/* --- tables -------------------------------------------------------------- */
 
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; }
-th { background: var(--blue); color: #fff; font-weight: 600; }
-tbody tr:nth-child(even) { background: #fafbfc; }
-td.num, th.num { text-align: center; }
+th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+th {
+  background: var(--blue); color: #fff; font-weight: 600;
+  position: sticky; top: 0; z-index: 1;
+  font-size: 12.5px; letter-spacing: .2px;
+}
+tbody tr:nth-child(even) { background: var(--surface-sunk); }
+tbody tr:hover { background: #eef4fb; }
+td.num, th.num { text-align: center; font-variant-numeric: tabular-nums; }
 
 .row-ifa td { background: #ddebf7; }
 .row-iff td { background: var(--ok); }
 .row-hold td { background: var(--orange); }
 .row-warn td { background: var(--amber); }
 
+/* The category table is a list of choices, so the whole row is the target. */
+#cats tbody tr { cursor: pointer; }
+#cats tbody tr.off td { color: var(--faint); }
+#cats tbody tr.off td:not(:first-child) { text-decoration: line-through; }
+
 .log {
-  background: #1e1e1e; color: #d7d7d7; padding: 12px 14px;
-  border-radius: 6px; font: 12px/1.6 Consolas, monospace;
+  background: #16202f; color: #d8dee9; padding: 13px 15px;
+  border-radius: var(--r-md); font: 12px/1.65 Consolas, "Cascadia Mono", monospace;
   white-space: pre-wrap; max-height: 340px; overflow: auto;
 }
 .list { list-style: none; padding: 0; margin: 10px 0 0; }
-.list li { padding: 7px 0; border-bottom: 1px solid var(--line); }
+.list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.list li:last-child { border-bottom: 0; }
 .list a { color: var(--blue); }
 
-.actions { margin-bottom: 16px; }
 .pill {
-  display: inline-block; padding: 2px 9px; border-radius: 10px;
-  font-size: 11.5px; font-weight: 600; margin-right: 6px;
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 700; margin-right: 6px; letter-spacing: .3px;
 }
 .pill.ifa { background: #ddebf7; color: #1f4e79; }
 .pill.iff { background: var(--ok); color: #375623; }
 
-/* --- hold dialog -------------------------------------------------------- */
+/* --- the stepper --------------------------------------------------------- */
 
-.backdrop {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, .45);
-  display: flex; align-items: center; justify-content: center; z-index: 50;
-}
-.modal {
-  background: #fff; border-radius: 8px; padding: 20px 22px;
-  width: min(940px, 94vw); max-height: 88vh; display: flex; flex-direction: column;
-}
-.modal h2 { margin: 0 0 6px; color: var(--navy); font-size: 17px; }
-.batch { display: flex; gap: 8px; margin: 10px 0; }
-.batch input { flex: 1; }
-.tablewrap { overflow: auto; flex: 1; border: 1px solid var(--line); border-radius: 4px; }
-.tablewrap input[type=text] { width: 100%; border: 0; padding: 3px 5px; }
-.tablewrap tr.sel td { background: #fff7dd; }
-.modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
-.modal-actions .status { margin-right: auto; margin-left: 0; }
-
-/* The empty state: what is about to happen, in order. */
+/* What is about to happen, in order - and it stays on the page once scanning
+   starts, because "where am I" is a live question, not just an empty state. */
 .steps {
-  list-style: none; counter-reset: step; margin: 22px 0 0; padding: 0;
-  display: flex; flex-direction: column; gap: 2px; max-width: 560px;
+  list-style: none; counter-reset: step; margin: 20px 0 18px; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 4px 2px;
+  border: 1px solid var(--line); background: var(--surface);
+  border-radius: var(--r-md); padding: 10px 12px; box-shadow: var(--shadow-1);
 }
 .steps li {
   counter-increment: step;
-  display: flex; align-items: center; gap: 12px;
-  padding: 9px 4px; color: var(--muted); font-size: 13px;
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 14px 6px 8px; color: var(--muted); font-size: 12.5px;
+  border-radius: var(--r-sm);
 }
 .steps li::before {
   content: counter(step);
-  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  flex: none; width: 21px; height: 21px; border-radius: 50%;
   display: grid; place-items: center;
   background: #e4e8f2; color: var(--brand-navy);
-  font-size: 11.5px; font-weight: 700;
+  font-size: 11px; font-weight: 700;
+  transition: background .15s ease, color .15s ease;
 }
-.steps li.on { color: var(--ink); font-weight: 600; }
+.steps li.on { color: var(--ink); font-weight: 600; background: #eef2fb; }
 .steps li.on::before { background: var(--brand-navy); color: #fff; }
+.steps li.done { color: var(--good); }
+.steps li.done::before { content: "\2713"; background: var(--good-bg); color: var(--good); }
+
+/* Before the first scan there is nothing else on the page, so the list gets
+   room to be the page's empty state instead of a strip of chrome. */
+.steps.roomy { flex-direction: column; gap: 2px; max-width: 620px; }
+.steps.roomy li { padding: 9px 10px; font-size: 13px; }
 
 /* --- path rows ----------------------------------------------------------- */
 
-/* Every destination on every tab is a text field plus a Browse button, so the
-   typed path stays visible and correctable - a picker alone hides where the
-   workbook actually went. */
-.pathrow { display: flex; gap: 8px; align-items: flex-end; margin: 8px 0; flex-wrap: wrap; }
+/* Every destination on every screen is a text field plus a Browse button, so
+   the typed path stays visible and correctable - a picker alone hides where
+   the workbook actually went. */
+.pathrow { display: flex; gap: 8px; align-items: flex-end; margin: 9px 0; flex-wrap: wrap; }
 .pathrow > input[type=text] { flex: 1; min-width: 240px; }
-.pathrow label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
-.pathrow label.grow { flex: 1; }
+.pathrow label {
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px;
+  color: var(--muted); font-weight: 500;
+}
+.pathrow label.grow { flex: 1; min-width: 240px; }
 .pathrow label.grow input { width: 100%; }
+.pathrow.rect { gap: 14px; }
 .pathrow.rect label { flex-direction: row; align-items: center; gap: 6px; }
 
 button.link {
   border: 0; background: none; color: var(--blue);
   padding: 0; font-size: 12.5px; text-decoration: underline;
 }
-button.link:hover { background: none; color: var(--navy); }
+button.link:hover:not(:disabled) { background: none; color: var(--brand-red); }
 
-.side { margin: 10px 0 16px; }
+.side { margin: 12px 0 16px; }
 .side strong { display: block; margin-bottom: 4px; color: var(--navy); }
 
-details.remote-alt { margin-top: 10px; }
+details.remote-alt { margin-top: 12px; }
 details.remote-alt summary { cursor: pointer; color: var(--blue); font-size: 12.5px; }
+details.remote-alt[open] summary { margin-bottom: 6px; }
 
-progress { width: 260px; height: 16px; vertical-align: middle; margin-left: 12px; }
-.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+progress { width: 240px; height: 8px; vertical-align: middle; border-radius: 999px; }
+progress::-webkit-progress-bar { background: #dfe5ee; border-radius: 999px; }
+progress::-webkit-progress-value { background: var(--brand-navy); border-radius: 999px; }
+
+.actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 16px; }
 #gen-status, #d-status, #v-status { display: block; margin: 0 0 12px; }
-span.good { color: #1e7b34; font-weight: 600; }
-span.bad { color: #b00020; font-weight: 600; }
+span.good { color: var(--good); font-weight: 600; }
+span.bad { color: var(--bad); font-weight: 600; }
+
+/* The form plus its run button. This is the sticky bar's containing block, so
+   the bar is pinned for as long as the form is on screen and releases when the
+   result scrolls up into its place. */
+.flow { display: flow-root; }
+
+/* The one button that does the job stays reachable however long the form gets
+   above it - on a package with twenty categories it was below the fold. */
+.runbar {
+  position: sticky; bottom: 0; z-index: 20;
+  background: rgba(255, 255, 255, .94);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: 0 -2px 14px -6px rgba(16, 32, 64, .3);
+  padding: 12px 16px; margin: 18px 0 0;
+}
+.runbar .actions { margin-bottom: 0; }
+.runbar .spacer { flex: 1; }
+
+/* --- the result summary -------------------------------------------------- */
+
+/* A run's headline numbers, which were previously a paragraph inside a black
+   log pane. Numbers, not a chart: four values with no relationship to plot. */
+.result { margin: 16px 0 0; }
+.kpis {
+  display: grid; gap: 10px; margin: 4px 0 14px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.kpi {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: 12px 14px; box-shadow: var(--shadow-1);
+}
+.kpi .v { font-size: 25px; font-weight: 600; line-height: 1.15; letter-spacing: -.4px; }
+.kpi .l { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.kpi.warn { border-color: #e8d5aa; background: var(--warn-bg); }
+.kpi.warn .v, .kpi.warn .l { color: var(--warn); }
+.kpi.good { border-color: #bfe0cb; background: var(--good-bg); }
+.kpi.good .v, .kpi.good .l { color: var(--good); }
+
+.saved {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--good-bg); border: 1px solid #bfe0cb; color: var(--good);
+  border-radius: var(--r-md); padding: 11px 14px; margin-bottom: 12px;
+  font-size: 13px;
+}
+.saved .path {
+  font-family: Consolas, monospace; font-size: 12px;
+  color: var(--ink); word-break: break-all;
+}
+.saved a { color: var(--good); font-weight: 600; }
+
+/* Validate and Compare are not part of the daily job, so they are not header
+   chrome - they are offered here, at the one moment they are the next thing
+   an engineer would do. */
+details.rundetail summary {
+  cursor: pointer; color: var(--blue); font-size: 12.5px; margin-bottom: 8px;
+}
+
+/* --- dialogs ------------------------------------------------------------- */
+
+.backdrop {
+  position: fixed; inset: 0; background: rgba(10, 20, 50, .5); z-index: 70;
+  display: flex; align-items: center; justify-content: center; padding: 4vh 16px;
+  animation: fade .14s ease;
+}
+.modal {
+  background: var(--surface); border-radius: var(--r-lg); padding: 20px 22px;
+  width: min(940px, 100%); max-height: 90vh; display: flex; flex-direction: column;
+  box-shadow: var(--shadow-3); animation: rise .16s ease;
+}
+.modal.narrow { width: min(460px, 100%); }
+.modal h2 { margin: 0 0 6px; color: var(--navy); font-size: 17px; }
+.batch { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.batch input { flex: 1; min-width: 180px; }
+.tablewrap {
+  overflow: auto; flex: 1; border: 1px solid var(--line);
+  border-radius: var(--r-sm); background: var(--surface);
+}
+.tablewrap table { border-collapse: separate; border-spacing: 0; }
+.tablewrap th, .tablewrap td { border-width: 0 1px 1px 0; }
+.tablewrap input[type=text] { width: 100%; border: 0; padding: 4px 6px; background: none; }
+.tablewrap input[type=text]:focus { box-shadow: var(--ring); border-radius: 3px; }
+.tablewrap tr.sel td { background: #fff7dd; }
+.modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.modal-actions .status { margin-right: auto; margin-left: 0; }
+
+/* --- toasts -------------------------------------------------------------- */
+
+/* A run takes minutes; the tab is usually not the one being looked at when it
+   finishes. The outcome says so where the eye lands next, and the status line
+   still holds the detail. */
+.toasts {
+  position: fixed; right: 18px; bottom: 18px; z-index: 90;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  pointer-events: none; max-width: min(420px, calc(100vw - 36px));
+}
+.toast {
+  pointer-events: auto;
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 4px solid var(--brand-navy);
+  border-radius: var(--r-md); box-shadow: var(--shadow-2);
+  padding: 11px 14px; font-size: 13px; color: var(--ink);
+  animation: toastin .18s ease;
+}
+.toast.good { border-left-color: var(--good); }
+.toast.bad { border-left-color: var(--bad); }
+.toast .mark { font-weight: 700; flex: none; }
+.toast.good .mark { color: var(--good); }
+.toast.bad .mark { color: var(--bad); }
+.toast .msg { min-width: 0; overflow-wrap: anywhere; }
+.toast .x {
+  border: 0; background: none; color: var(--faint); padding: 0 0 0 4px;
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+@keyframes toastin { from { opacity: 0; transform: translateX(14px); } }
 
 /* --- result sub-tabs ----------------------------------------------------- */
 
-.subtabs { display: flex; gap: 2px; margin-bottom: -1px; flex-wrap: wrap; }
+.subtabs { display: flex; gap: 3px; margin-bottom: -1px; flex-wrap: wrap; }
 .subtab {
-  border: 1px solid var(--line); border-bottom: 0; background: #eef3f8;
-  border-radius: 4px 4px 0 0; font-size: 12.5px; padding: 6px 14px;
+  border: 1px solid var(--line); border-bottom: 0; background: #e7edf5;
+  border-radius: var(--r-sm) var(--r-sm) 0 0; font-size: 12.5px; padding: 7px 15px;
 }
-.subtab.active { background: #fff; color: var(--navy); font-weight: 600; }
-.subpanel { display: none; background: #fff; border: 1px solid var(--line); padding: 10px; }
+.subtab.active { background: var(--surface); color: var(--navy); font-weight: 600; }
+.subpanel {
+  display: none; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 0 var(--r-sm) var(--r-sm); padding: 10px;
+}
 .subpanel.active { display: block; }
 .subpanel .tablewrap { max-height: 380px; }
 
 /* --- folder picker ------------------------------------------------------- */
 
-.drives { margin: 6px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+.drives { margin: 8px 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .list.picker {
   max-height: 46vh; overflow: auto; border: 1px solid var(--line);
-  border-radius: 4px; margin-top: 4px;
+  border-radius: var(--r-sm); margin-top: 4px; background: var(--surface);
 }
-.list.picker li { padding: 4px 10px; border-bottom: 1px solid #eee; }
-.list.picker a { text-decoration: none; display: block; }
-.list.picker a:hover { background: #eef3f8; }
+.list.picker li { padding: 0; border-bottom: 1px solid #eef1f6; }
+.list.picker a {
+  text-decoration: none; display: block; padding: 6px 11px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.list.picker a:hover, .list.picker a:focus-visible { background: #eef4fb; outline: none; }
+.list.picker a.cursor { background: #dde8f7; box-shadow: inset 3px 0 0 var(--brand-navy); }
 
-/* --- settings tab -------------------------------------------------------- */
+/* --- settings ------------------------------------------------------------ */
 
 .split { display: flex; gap: 16px; align-items: flex-start; }
 .split .col { flex: 1; min-width: 0; }
 textarea {
-  width: 100%; font: 12px/1.5 Consolas, monospace; padding: 8px;
-  border: 1px solid var(--line); border-radius: 4px; resize: vertical;
+  width: 100%; font: 12px/1.55 Consolas, "Cascadia Mono", monospace; padding: 9px;
+  resize: vertical;
 }
 #t-out { max-height: 420px; }
 
-@media (max-width: 900px) { .split { flex-direction: column; } }
+@media (max-width: 900px) { .split { flex-direction: column; width: 100%; } }

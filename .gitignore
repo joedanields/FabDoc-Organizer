@@ -20,3 +20,4 @@ samples/
 
 # Uploads, generated registers and package trackers written by the web app.
 web/data/
+*.zip

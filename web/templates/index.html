@@ -12,34 +12,54 @@
 <body data-local="{{ 'yes' if local else 'no' }}">
 
 <header>
-  <img class="brand" src="/static/img/struzon-logo.png"
-       alt="Struzon Technologies Pvt. Ltd &mdash; Stands For Trust">
+  <div class="wrap">
+    <img class="brand" src="/static/img/struzon-logo.png"
+         alt="Struzon Technologies Pvt. Ltd &mdash; Stands For Trust">
 
-  <!-- Generating a register is the whole job; the other four screens are
-       occasional, so they sit here as icons instead of taking a tab strip
-       that made the main task look like one option out of five. -->
-  <nav class="tools" aria-label="Other screens">
-    <button class="tool" data-sheet="trackers" title="Package trackers">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-      <span>Trackers</span>
-    </button>
-    <button class="tool" data-sheet="settings" title="Extraction settings">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11.5 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9 2 2 0 1 1 0 4 1.7 1.7 0 0 0-1 .1z"/></svg>
-      <span>Settings</span>
-    </button>
-  </nav>
+    <!-- Generating a register is the whole job; the other screens are
+         occasional, so they sit here as icons instead of taking a tab strip
+         that made the main task look like one option out of five. A finished
+         run ends at the files it wrote - nothing is offered after it. -->
+    <nav class="tools" aria-label="Other screens">
+      <button class="tool" data-sheet="trackers" title="Package trackers">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        <span>Trackers</span>
+      </button>
+      <button class="tool" data-sheet="settings" title="Extraction settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11.5 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9 2 2 0 1 1 0 4 1.7 1.7 0 0 0-1 .1z"/></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+  </div>
 </header>
 
 <div class="masthead">
-  <div class="masthead-inner">
+  <div class="wrap">
     <h1>{{ app_name }}</h1>
     <p>Read an issue folder, write its register, and add it to the package tracker.</p>
-    <span class="version">{{ version }}</span>
+    <span class="version">v{{ version }}</span>
   </div>
 </div>
 
 <!-- ------------------------------------------------------------ generate -->
 <section class="panel active" id="panel-generate">
+
+  <!-- The form and the button that runs it are one block, so the sticky bar
+       stays pinned while the form is being filled in and lets go once the
+       result below it comes into view - a bar floating over the numbers it
+       just produced is in the way. -->
+  <div class="flow">
+
+  <!-- What is about to happen, in order. It stays on the page once scanning
+       starts, collapsed to a strip, because "where am I" is a live question
+       and not only an empty state. -->
+  <ol class="steps roomy" id="steps">
+    <li class="on">Point at the issue folder</li>
+    <li>Check the project details and categories</li>
+    <li>Choose where the register and tracker go</li>
+    <li>Say whether it is for approval or fabrication</li>
+    <li>Generate</li>
+  </ol>
 
   <fieldset>
     <legend>Project folder</legend>
@@ -48,10 +68,11 @@
       <p class="hint">The folder is read where it sits &mdash; nothing is copied.
          Its subfolders become worksheets, so pick the issue folder itself.</p>
       <div class="pathrow">
-        <input type="text" id="src-folder" placeholder="C:\Jobs\17172\15. 2026-06-26 Stairs at Zone 1...">
+        <input type="text" id="src-folder" aria-label="Issue folder"
+               placeholder="C:\Jobs\17172\15. 2026-06-26 Stairs at Zone 1...">
         <button class="browse" data-target="src-folder" data-kind="folder">Browse&hellip;</button>
         <button id="scan-local" class="primary">Scan folder</button>
-        <button id="rescan">Rescan</button>
+        <button id="rescan" hidden>Rescan</button>
       </div>
     </div>
 
@@ -63,19 +84,11 @@
       <button id="scan">Scan upload</button>
     </details>
 
-    <span id="scan-status" class="status"></span>
+    <span id="scan-status" class="status" role="status" aria-live="polite"></span>
   </fieldset>
 
   <!-- Everything below appears once a folder is scanned, so an untouched page
        would otherwise be one box and a lot of nothing. -->
-  <ol class="steps" id="steps">
-    <li class="on">Point at the issue folder</li>
-    <li>Check the project details and categories</li>
-    <li>Choose where the register and tracker go</li>
-    <li>Say whether it is for approval or fabrication</li>
-    <li>Generate</li>
-  </ol>
-
   <fieldset id="meta-box" hidden>
     <legend>Project details &mdash; read from the folder name, edit if needed</legend>
     <div class="grid">
@@ -93,16 +106,21 @@
     <p class="hint">
       <button id="cat-all" class="link">Select all</button> &middot;
       <button id="cat-none" class="link">Select none</button>
+      <span id="cat-count" class="status"></span>
     </p>
-    <table id="cats"><thead><tr>
-      <th></th><th>Worksheet</th><th>Source subfolder</th><th>PDFs</th><th>Detected as</th>
-    </tr></thead><tbody></tbody></table>
+    <div class="tablewrap">
+      <table id="cats"><thead><tr>
+        <th><span class="sr-only">Include</span></th><th>Worksheet</th>
+        <th>Source subfolder</th><th class="num">PDFs</th><th>Detected as</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
   </fieldset>
 
   <fieldset id="out-box" hidden>
     <legend>Output workbook</legend>
     <div class="pathrow local-only">
-      <input type="text" id="out-folder" placeholder="Folder to save the register in">
+      <input type="text" id="out-folder" aria-label="Output folder"
+             placeholder="Folder to save the register in">
       <button class="browse" data-target="out-folder" data-kind="folder">Browse&hellip;</button>
     </div>
     <div class="pathrow">
@@ -117,49 +135,82 @@
   <fieldset id="track-box" hidden>
     <legend>Package tracker &mdash; chains every issue of this package</legend>
     <label class="inline"><input type="checkbox" id="track" checked> Add this issue to the tracker</label>
-    <label class="inline">Stage
-      <select id="stage">
-        <option value="">&mdash; choose &mdash;</option>
-        {% for s in stages %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
-      </select>
-    </label>
-    <label class="inline">Round <input id="round" type="text" size="6"></label>
-    <div class="pathrow local-only">
-      <input type="text" id="track-folder" placeholder="Folder to keep the tracker in">
-      <button class="browse" data-target="track-folder" data-kind="folder">Browse&hellip;</button>
+
+    <div id="track-body">
+      <!-- The stage is never guessed from the folder name: an approval issue
+           mistaken for a fabrication release would rewrite the approved
+           baseline and report the rest of the package as unshipped. So it is
+           two named choices, not an eight-character code in a dropdown. -->
+      <p class="hint" id="stage-label">What is this issue for?</p>
+      <div class="seg" role="radiogroup" aria-labelledby="stage-label">
+        {% for s in stages %}
+        <label class="segopt">
+          <input type="radio" name="stagepick" value="{{ s }}">
+          <span class="segtext">
+            <span class="code">{{ s }}</span>
+            <span class="what">{% if s == 'IFA' %}Issued for approval &mdash; this issue sets
+              the approved baseline{% else %}Issued for fabrication &mdash; this issue releases
+              part of the approved baseline{% endif %}</span>
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      <input type="hidden" id="stage" value="">
+
+      <label class="inline">Round <input id="round" type="text" size="6"></label>
+
+      <div class="pathrow local-only">
+        <input type="text" id="track-folder" aria-label="Tracker folder"
+               placeholder="Folder to keep the tracker in">
+        <button class="browse" data-target="track-folder" data-kind="folder">Browse&hellip;</button>
+      </div>
+      <div class="pathrow">
+        <label class="grow">Tracker file <input type="text" id="track-name"></label>
+        <button id="open-tracker" class="local-only" disabled>Open tracker</button>
+      </div>
+      <div id="track-info" class="status" role="status" aria-live="polite"></div>
+      <label class="inline local-only"><input type="checkbox" id="track-default">
+        Remember this as the default tracker folder</label>
+      <p class="hint">Point this at an <strong>existing tracker</strong> to add the issue
+         to that chain &mdash; that is how an IFF release finds the scope its IFA issue
+         approved. A tracker is only ever added to, never replaced, and the field
+         is not overwritten when you scan the next folder.</p>
     </div>
-    <div class="pathrow">
-      <label class="grow">Tracker file <input type="text" id="track-name"></label>
-      <button id="open-tracker" class="local-only" disabled>Open tracker</button>
-    </div>
-    <div id="track-info" class="status"></div>
-    <label class="inline local-only"><input type="checkbox" id="track-default">
-      Remember this as the default tracker folder</label>
-    <p class="hint">IFA = issued for approval, IFF = issued for fabrication. The
-       stage is never guessed from the folder name: an approval issue mistaken
-       for a fabrication release would rewrite the approved baseline and report
-       the rest of the package as unshipped.</p>
-    <p class="hint">Point this at an <strong>existing tracker</strong> to add the issue
-       to that chain - that is how an IFF release finds the scope its IFA issue
-       approved. A tracker is only ever added to, never replaced, and the field
-       is not overwritten when you scan the next folder.</p>
   </fieldset>
 
-  <div class="actions" id="run-box" hidden>
-    <button id="generate" class="primary">Generate register</button>
-    <button id="gen-cancel" disabled>Cancel</button>
-    <button id="open-book" class="local-only" disabled>Open workbook</button>
-    <button id="reveal-book" class="local-only" disabled>Show in folder</button>
-    <progress id="gen-progress" value="0" max="100" hidden></progress>
+  <!-- The one button that does the job, kept in reach however long the form
+       above it runs. -->
+  <div class="runbar" id="run-box" hidden>
+    <div class="actions">
+      <button id="generate" class="primary big">Generate register</button>
+      <button id="gen-cancel" disabled>Cancel</button>
+      <progress id="gen-progress" value="0" max="100" hidden
+                aria-label="Reading drawings"></progress>
+      <span class="spacer"></span>
+      <span class="hint" id="run-tip">Ctrl + Enter</span>
+    </div>
   </div>
-  <div id="gen-status" class="status"></div>
 
-  <pre id="log" class="log" hidden></pre>
+  </div><!-- /.flow -->
+
+  <div id="gen-status" class="status" role="status" aria-live="polite"></div>
+
+  <!-- Written by the run: the headline numbers, where the files went, what to
+       do next, and the full log underneath for when a number looks wrong. -->
+  <div class="result" id="result" hidden>
+    <div class="kpis" id="kpis"></div>
+    <div id="saved-lines"></div>
+
+    <details class="rundetail" id="rundetail">
+      <summary>Run details</summary>
+      <pre id="log" class="log"></pre>
+    </details>
+  </div>
 </section>
 
-<!-- The four occasional screens. One set of chrome, one at a time. -->
+<!-- The occasional screens. One set of chrome, one at a time. -->
 <div class="sheet-host" id="sheet-host" hidden>
-  <div class="sheet">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <div class="sheet-bar">
       <h2 id="sheet-title">Validate Members</h2>
       <button id="sheet-close" class="ghost" title="Close (Esc)">Close</button>
@@ -171,12 +222,13 @@
   <fieldset>
     <legend>Drawing register</legend>
     <label class="inline"><input type="radio" name="regsrc" value="last" id="v-src-last" checked>
-      Use the register generated on tab 1</label>
+      Use the register just generated</label>
     <span id="v-last" class="hint">No register has been generated yet.</span>
     <label class="inline block"><input type="radio" name="regsrc" value="file">
       Load an existing register workbook</label>
     <div class="pathrow local-only" id="v-reg-pathrow">
-      <input type="text" id="v-register-path" placeholder="Path to a register workbook" disabled>
+      <input type="text" id="v-register-path" aria-label="Register workbook"
+             placeholder="Path to a register workbook" disabled>
       <button class="browse" data-target="v-register-path" data-kind="file" disabled>Browse&hellip;</button>
     </div>
     <input type="file" id="v-register" accept=".xlsx,.xlsm" disabled>
@@ -185,7 +237,8 @@
   <fieldset>
     <legend>Structural model member list</legend>
     <div class="pathrow local-only">
-      <input type="text" id="v-members-path" placeholder="Path to the member list">
+      <input type="text" id="v-members-path" aria-label="Member list"
+             placeholder="Path to the member list">
       <button class="browse" data-target="v-members-path" data-kind="file">Browse&hellip;</button>
     </div>
     <input type="file" id="v-members" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
@@ -207,7 +260,8 @@
   <fieldset class="local-only">
     <legend>Report</legend>
     <div class="pathrow">
-      <input type="text" id="v-out-folder" placeholder="Folder for the validation report">
+      <input type="text" id="v-out-folder" aria-label="Report folder"
+             placeholder="Folder for the validation report">
       <button class="browse" data-target="v-out-folder" data-kind="folder">Browse&hellip;</button>
     </div>
     <label class="grow block">File name <input type="text" id="v-out-name"
@@ -217,8 +271,8 @@
   <div class="actions">
     <button id="validate" class="primary">Compare</button>
     <button id="v-open" class="local-only" disabled>Open report</button>
-    <span id="v-status" class="status"></span>
   </div>
+  <div id="v-status" class="status" role="status" aria-live="polite"></div>
   <div id="v-result"></div>
 </section>
 
@@ -233,7 +287,8 @@
     <div class="side" data-side="old">
       <strong>Older issue</strong>
       <div class="pathrow local-only">
-        <input type="text" id="d-old-path" placeholder="Package folder or register workbook">
+        <input type="text" id="d-old-path" aria-label="Older issue"
+               placeholder="Package folder or register workbook">
         <button class="browse" data-target="d-old-path" data-kind="folder">Folder&hellip;</button>
         <button class="browse" data-target="d-old-path" data-kind="file">Workbook&hellip;</button>
       </div>
@@ -243,7 +298,8 @@
     <div class="side" data-side="new">
       <strong>Newer issue</strong>
       <div class="pathrow local-only">
-        <input type="text" id="d-new-path" placeholder="Package folder or register workbook">
+        <input type="text" id="d-new-path" aria-label="Newer issue"
+               placeholder="Package folder or register workbook">
         <button class="browse" data-target="d-new-path" data-kind="folder">Folder&hellip;</button>
         <button class="browse" data-target="d-new-path" data-kind="file">Workbook&hellip;</button>
       </div>
@@ -261,7 +317,8 @@
   <fieldset class="local-only">
     <legend>Report</legend>
     <div class="pathrow">
-      <input type="text" id="d-out-folder" placeholder="Folder for the comparison report">
+      <input type="text" id="d-out-folder" aria-label="Report folder"
+             placeholder="Folder for the comparison report">
       <button class="browse" data-target="d-out-folder" data-kind="folder">Browse&hellip;</button>
     </div>
     <label class="grow block">File name <input type="text" id="d-out-name"
@@ -272,9 +329,9 @@
     <button id="diff" class="primary">Compare issues</button>
     <button id="d-cancel" disabled>Cancel</button>
     <button id="d-open" class="local-only" disabled>Open report</button>
-    <progress id="d-progress" value="0" max="100" hidden></progress>
+    <progress id="d-progress" value="0" max="100" hidden aria-label="Comparing"></progress>
   </div>
-  <div id="d-status" class="status"></div>
+  <div id="d-status" class="status" role="status" aria-live="polite"></div>
   <div id="d-result"></div>
 </section>
 
@@ -312,19 +369,22 @@
     <div class="col">
       <fieldset><legend>Test drawing</legend>
         <div class="pathrow local-only">
-          <input type="text" id="t-path" placeholder="Path to a representative drawing PDF">
+          <input type="text" id="t-path" aria-label="Test drawing"
+                 placeholder="Path to a representative drawing PDF">
           <button class="browse" data-target="t-path" data-kind="file">Browse&hellip;</button>
         </div>
         <input type="file" id="t-pdf" accept=".pdf">
-        <button id="run-test" class="primary">Test</button>
-        <span id="t-status" class="status"></span>
+        <div class="actions">
+          <button id="run-test" class="primary">Test</button>
+          <span id="t-status" class="status" role="status" aria-live="polite"></span>
+        </div>
       </fieldset>
 
       <fieldset><legend>What the parser sees / what it extracted</legend>
         <pre id="t-out" class="log">Choose a drawing and press Test.</pre></fieldset>
 
       <fieldset><legend>General</legend>
-        <label class="inline"><input type="checkbox" id="s-daryfirst"> Folder dates are day-first (dd-mm-yyyy)</label>
+        <label class="inline block"><input type="checkbox" id="s-daryfirst"> Folder dates are day-first (dd-mm-yyyy)</label>
         <label class="inline block"><input type="checkbox" id="s-source"> Include Source File and Notes columns</label>
         <label class="inline block"><input type="checkbox" id="s-zone"> Group register rows by zone</label>
         <div class="pathrow local-only">
@@ -342,7 +402,7 @@
   <div class="actions">
     <button id="save-settings" class="primary">Save settings</button>
     <button id="reset-settings">Restore defaults</button>
-    <span id="s-status" class="status"></span>
+    <span id="s-status" class="status" role="status" aria-live="polite"></span>
   </div>
 </section>
 
@@ -362,25 +422,27 @@
 
 <!-- ------------------------------------------------------- hold modal -->
 <div class="backdrop" id="hold-backdrop" hidden>
-  <div class="modal">
-    <h2>Members on hold</h2>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="hold-heading">
+    <h2 id="hold-heading">Members on hold</h2>
     <p id="hold-intro" class="hint"></p>
     <div class="batch">
-      <input type="text" id="hold-all" placeholder="Reason for all outstanding members">
+      <input type="text" id="hold-all" aria-label="Reason for all outstanding members"
+             placeholder="Reason for all outstanding members">
       <button id="apply-all">Apply to all</button>
     </div>
     <div class="batch">
-      <input type="text" id="hold-sel" placeholder="Reason for ticked members">
+      <input type="text" id="hold-sel" aria-label="Reason for ticked members"
+             placeholder="Reason for ticked members">
       <button id="apply-sel">Apply to ticked</button>
     </div>
     <div class="tablewrap">
       <table id="hold-table"><thead><tr>
-        <th></th><th>Member</th><th>Category</th><th>Zone</th><th>Rev</th>
-        <th>On hold since</th><th>Reason</th>
+        <th><span class="sr-only">Select</span></th><th>Member</th><th>Category</th>
+        <th>Zone</th><th>Rev</th><th>On hold since</th><th>Reason</th>
       </tr></thead><tbody></tbody></table>
     </div>
     <div class="modal-actions">
-      <span id="hold-count" class="status"></span>
+      <span id="hold-count" class="status" role="status" aria-live="polite"></span>
       <button id="hold-cancel">Cancel</button>
       <button id="hold-save" class="primary">Save reasons</button>
     </div>
@@ -389,23 +451,42 @@
 
 <!-- --------------------------------------------------- folder picker -->
 <div class="backdrop" id="pick-backdrop" hidden>
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pick-title">
     <h2 id="pick-title">Choose a folder</h2>
     <div class="batch">
-      <input type="text" id="pick-path" placeholder="Type or paste a path">
+      <input type="text" id="pick-path" aria-label="Path" placeholder="Type or paste a path">
       <button id="pick-go">Go</button>
-      <button id="pick-up">Up</button>
+      <button id="pick-up" title="Parent folder (Backspace)">Up</button>
       <button id="pick-new">New folder</button>
     </div>
     <div id="pick-drives" class="drives"></div>
     <ul id="pick-list" class="list picker"></ul>
     <div class="modal-actions">
-      <span id="pick-status" class="status"></span>
+      <span id="pick-status" class="status" role="status" aria-live="polite"></span>
       <button id="pick-cancel">Cancel</button>
       <button id="pick-ok" class="primary">Use this folder</button>
     </div>
   </div>
 </div>
+
+<!-- ------------------------------------------------ ask (confirm / prompt) -->
+<!-- The browser's own alert(), confirm() and prompt() freeze the page, land
+     outside the window on a second monitor, and look nothing like the app.
+     One dialog does all three instead. -->
+<div class="backdrop" id="ask-backdrop" hidden>
+  <div class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+    <h2 id="ask-title"></h2>
+    <p id="ask-body" class="hint"></p>
+    <input type="text" id="ask-input" aria-labelledby="ask-title" hidden>
+    <div class="modal-actions">
+      <span class="spacer" style="flex:1"></span>
+      <button id="ask-cancel">Cancel</button>
+      <button id="ask-ok" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
 <script src="/static/app.js"></script>
 </body>

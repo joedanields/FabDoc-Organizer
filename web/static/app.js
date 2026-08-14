@@ -30,10 +30,14 @@ const SHEETS = {
   settings: "Extraction Settings",
 };
 
+let sheetReturn = null;          // what had focus before the sheet opened
+
 function openSheet(name) {
+  if (!SHEETS[name]) return;
+  sheetReturn = document.activeElement;
   document.querySelectorAll(".sheet-body .panel")
     .forEach((p) => p.classList.toggle("active", p.id === "panel-" + name));
-  $("sheet-title").textContent = SHEETS[name] || "";
+  $("sheet-title").textContent = SHEETS[name];
   $("sheet-host").hidden = false;
   document.body.classList.add("sheet-open");
   $("sheet-close").focus();
@@ -45,25 +49,119 @@ function openSheet(name) {
 function closeSheet() {
   $("sheet-host").hidden = true;
   document.body.classList.remove("sheet-open");
+  // Back to the button that opened it, so a keyboard run does not restart at
+  // the top of the document every time a screen is closed.
+  if (sheetReturn && document.contains(sheetReturn)) sheetReturn.focus();
+  sheetReturn = null;
 }
 
-document.querySelectorAll("button.tool").forEach((b) => {
+// Header icons and the "Next" buttons on a finished run both open a screen.
+document.querySelectorAll("button[data-sheet]").forEach((b) => {
   b.onclick = () => openSheet(b.dataset.sheet);
 });
 $("sheet-close").onclick = closeSheet;
 $("sheet-host").onclick = (e) => { if (e.target === $("sheet-host")) closeSheet(); };
 
+/* Keeping Tab inside whatever is on top. Without it the invisible page behind
+   a dialog is still tabbable, and three presses put focus somewhere the user
+   cannot see it. */
+const FOCUSABLE = 'a[href],button:not(:disabled),input:not(:disabled),' +
+                  'select:not(:disabled),textarea:not(:disabled),summary,[tabindex]:not([tabindex="-1"])';
+
+function topLayer() {
+  for (const id of ["ask-backdrop", "pick-backdrop", "hold-backdrop", "sheet-host"]) {
+    if (!$(id).hidden) return $(id);
+  }
+  return null;
+}
+
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  // Innermost first: a picker or the hold dialog owns Escape before the sheet.
-  if (!$("pick-backdrop").hidden) { closePick(null); return; }
-  if (!$("hold-backdrop").hidden) return;
-  if (!$("sheet-host").hidden) closeSheet();
+  const layer = topLayer();
+
+  if (e.key === "Escape") {
+    if (!layer) return;
+    if (layer.id === "ask-backdrop") { closeAsk(null); return; }
+    if (layer.id === "pick-backdrop") { closePick(null); return; }
+    if (layer.id === "hold-backdrop") return;   // reasons would be lost silently
+    closeSheet();
+    return;
+  }
+
+  if (e.key === "Tab" && layer) {
+    const items = [...layer.querySelectorAll(FOCUSABLE)]
+      .filter((el) => el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
 });
 
 function status(el, text, kind) {
   el.textContent = text;
   el.className = "status" + (kind ? " " + kind : "");
+}
+
+/* ---------------------------------------------------------------- toasts */
+
+/* Reading a package is minutes of work, and the tab is rarely the one being
+   looked at when it lands. The outcome shows up where the eye goes next; the
+   status line under the button still holds the detail. */
+
+function toast(message, kind, ms) {
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.innerHTML =
+    `<span class="mark">${kind === "bad" ? "&#9888;" : kind === "good" ? "&#10003;" : "&#8505;"}</span>` +
+    `<span class="msg">${esc(message)}</span>` +
+    `<button class="x" aria-label="Dismiss">&times;</button>`;
+  const drop = () => el.remove();
+  el.querySelector(".x").onclick = drop;
+  $("toasts").appendChild(el);
+  setTimeout(drop, ms || (kind === "bad" ? 9000 : 5000));
+}
+
+/* ------------------------------------------------------------------- ask */
+
+/* alert(), confirm() and prompt() freeze the page, can open behind the window
+   on a second monitor, and look nothing like the app. One dialog does all
+   three; it resolves to null on cancel, and to the typed text (or true) on OK. */
+
+let askResolve = null;
+
+function ask({ title, body = "", value = null, ok = "OK", cancel = "Cancel" }) {
+  $("ask-title").textContent = title;
+  $("ask-body").textContent = body;
+  $("ask-body").hidden = !body;
+  const wantsText = value !== null;
+  $("ask-input").hidden = !wantsText;
+  $("ask-input").value = wantsText ? value : "";
+  $("ask-ok").textContent = ok;
+  $("ask-cancel").hidden = !cancel;
+  $("ask-cancel").textContent = cancel || "Cancel";
+  $("ask-backdrop").hidden = false;
+  (wantsText ? $("ask-input") : $("ask-ok")).focus();
+  if (wantsText) $("ask-input").select();
+  return new Promise((resolve) => (askResolve = resolve));
+}
+
+function closeAsk(value) {
+  $("ask-backdrop").hidden = true;
+  if (askResolve) askResolve(value);
+  askResolve = null;
+}
+
+$("ask-ok").onclick = () =>
+  closeAsk($("ask-input").hidden ? true : $("ask-input").value.trim() || null);
+$("ask-cancel").onclick = () => closeAsk(null);
+$("ask-input").onkeydown = (e) => { if (e.key === "Enter") $("ask-ok").click(); };
+$("ask-backdrop").onclick = (e) => { if (e.target === $("ask-backdrop")) closeAsk(null); };
+
+/* Buttons that start something say so themselves, so the pointer does not have
+   to travel to a status line to find out whether the click landed. */
+function busy(btn, on) {
+  btn.classList.toggle("busy", !!on);
+  btn.disabled = !!on;
 }
 
 async function send(url, options) {
@@ -93,6 +191,7 @@ function form(pairs) {
 let pickResolve = null;
 let pickHere = "";
 let pickKind = "folder";
+let pickCursor = -1;             // arrow-key position in the listing
 
 const SUFFIXES = {
   file: ".xlsx,.xlsm,.csv,.tsv,.txt,.pdf",
@@ -142,6 +241,7 @@ async function loadPick(path) {
     $("pick-list").querySelectorAll(".pfile").forEach((a) => {
       a.onclick = (e) => { e.preventDefault(); closePick(join(pickHere, a.dataset.name)); };
     });
+    pickCursor = -1;
     status($("pick-status"),
       d.error || (d.writable ? "" : "This folder is read-only."),
       d.error || !d.writable ? "bad" : "");
@@ -163,13 +263,45 @@ function closePick(value) {
 
 $("pick-go").onclick = () => loadPick($("pick-path").value.trim());
 $("pick-path").onkeydown = (e) => { if (e.key === "Enter") loadPick($("pick-path").value.trim()); };
-$("pick-up").onclick = async () => {
+
+async function pickUp() {
   const q = new URLSearchParams({ path: pickHere });
   const d = await send("/api/browse?" + q.toString());
   loadPick(d.parent || d.path);
-};
+}
+$("pick-up").onclick = pickUp;
+
+/* A folder tree is a list, and a list is walked with the arrow keys. Without
+   this the only way down a deep job path is a click per level. */
+$("pick-backdrop").addEventListener("keydown", (e) => {
+  if ($("pick-backdrop").hidden) return;
+  const items = [...$("pick-list").querySelectorAll("a")];
+  const typing = e.target.tagName === "INPUT";
+
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (!items.length) return;
+    e.preventDefault();
+    pickCursor = e.key === "ArrowDown"
+      ? Math.min(pickCursor + 1, items.length - 1)
+      : Math.max(pickCursor - 1, 0);
+    items.forEach((a, i) => a.classList.toggle("cursor", i === pickCursor));
+    items[pickCursor].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter" && pickCursor >= 0 && !typing) {
+    e.preventDefault();
+    items[pickCursor].click();
+  } else if (e.key === "Backspace" && !typing) {
+    e.preventDefault();
+    pickUp();
+  }
+});
+
 $("pick-new").onclick = async () => {
-  const name = prompt("Name for the new folder:");
+  const name = await ask({
+    title: "New folder",
+    body: `It will be created in ${pickHere}.`,
+    value: "",
+    ok: "Create",
+  });
   if (!name) return;
   try {
     const d = await send("/api/browse/mkdir", {
@@ -207,8 +339,31 @@ async function openWritten(path, reveal) {
       body: JSON.stringify({ path, reveal: !!reveal }),
     });
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "bad");
   }
+}
+
+/* ---------------------------------------------------------------- stepper */
+
+/* The five steps stay on the page instead of disappearing on the first scan:
+   half way down a long form, "which of these still needs an answer" is a live
+   question. Everything before the current step is ticked. */
+
+function setStep(n) {
+  $("steps").classList.toggle("roomy", n === 1);
+  [...$("steps").children].forEach((li, i) => {
+    li.classList.toggle("on", i + 1 === n);
+    li.classList.toggle("done", i + 1 < n);
+  });
+}
+
+/* Which step the form is on, judged by what still has no answer. Called from
+   the controls that answer one, so the highlight only ever moves because the
+   engineer did something. */
+function refreshStep() {
+  if (!session && !localPath) { setStep(1); return; }
+  if ($("track").checked && !$("stage").value) { setStep(4); return; }
+  setStep(5);
 }
 
 /* ------------------------------------------------------------- job polling */
@@ -257,7 +412,11 @@ function applyScan(data) {
   $("m-package").value = data.meta.package;
   $("m-project").value = data.meta.project || "";
   $("round").value = data.meta.issue_no || "";
+  // The stage is cleared on every scan on purpose: carrying the previous
+  // issue's answer over is exactly how an approval issue gets released as a
+  // fabrication one.
   $("stage").value = "";
+  document.querySelectorAll('input[name="stagepick"]').forEach((r) => (r.checked = false));
 
   $("out-folder").value = data.output.folder || "";
   $("out-name").value = data.output.name || "";
@@ -273,25 +432,54 @@ function applyScan(data) {
   const body = $("cats").querySelector("tbody");
   body.innerHTML = data.categories.map((c) => `
     <tr>
-      <td><input type="checkbox" class="cat" value="${esc(c.name)}" checked></td>
+      <td><input type="checkbox" class="cat" value="${esc(c.name)}" checked
+                 aria-label="Include ${esc(c.name)}"></td>
       <td>${esc(c.name)}</td>
       <td>${esc(c.folder)}</td>
       <td class="num">${c.count}</td>
       <td>${c.recognised ? esc(c.matched) : "name used as-is"}</td>
     </tr>`).join("");
+  countCats();
 
   ["meta-box", "cat-box", "out-box", "track-box", "run-box"]
     .forEach((id) => ($(id).hidden = false));
-  $("steps").hidden = true;
-  ["open-book", "reveal-book", "open-tracker"].forEach((id) => ($(id).disabled = true));
-  $("log").hidden = true;
+  if (LOCAL) $("rescan").hidden = false;
+  ["open-tracker"].forEach((id) => ($(id).disabled = true));
+  $("result").hidden = true;
   status($("gen-status"), "");
+  setStep(2);          // the details and the categories are the next read
 
   const n = data.categories.length;
   status($("scan-status"),
     `${data.folder} - ${n} categor${n === 1 ? "y" : "ies"}, ${data.pdfs} PDF(s).`,
     n ? "good" : "bad");
+  if (!n) toast("No drawing categories found in that folder.", "bad");
+  $("meta-box").scrollIntoView({ block: "nearest" });
 }
+
+/* How many worksheets the run will write, said next to the tick boxes rather
+   than left to be counted by eye. */
+function countCats() {
+  const all = [...document.querySelectorAll(".cat")];
+  const on = all.filter((c) => c.checked);
+  const pdfs = on.reduce((sum, c) => {
+    const cell = c.closest("tr").querySelector("td.num");
+    return sum + (parseInt(cell.textContent, 10) || 0);
+  }, 0);
+  all.forEach((c) => c.closest("tr").classList.toggle("off", !c.checked));
+  status($("cat-count"), all.length
+    ? `${on.length} of ${all.length} selected - ${pdfs} drawing(s) will be read.`
+    : "", on.length ? "" : "bad");
+}
+
+// The tick box is a 15px target in a 40px row, so the row is the target.
+$("cats").addEventListener("click", (e) => {
+  const row = e.target.closest("tbody tr");
+  if (!row) return;
+  const box = row.querySelector(".cat");
+  if (e.target !== box) box.checked = !box.checked;
+  countCats();
+});
 
 async function scanLocal() {
   const folder = $("src-folder").value.trim();
@@ -299,7 +487,7 @@ async function scanLocal() {
     status($("scan-status"), "Choose the project (issue) folder first.", "bad");
     return;
   }
-  $("scan-local").disabled = true;
+  busy($("scan-local"), true);
   status($("scan-status"), "Scanning...");
   try {
     applyScan(await send("/api/scan/local", {
@@ -309,8 +497,9 @@ async function scanLocal() {
     }));
   } catch (err) {
     status($("scan-status"), err.message, "bad");
+    toast(err.message, "bad");
   } finally {
-    $("scan-local").disabled = false;
+    busy($("scan-local"), false);
   }
 }
 
@@ -334,14 +523,15 @@ $("scan").onclick = async () => {
     fd.append("paths", f.webkitRelativePath || f.name);
   });
 
-  $("scan").disabled = true;
+  busy($("scan"), true);
   status($("scan-status"), `Uploading ${files.length} drawing(s)...`);
   try {
     applyScan(await send("/api/scan", { method: "POST", body: fd }));
   } catch (err) {
     status($("scan-status"), err.message, "bad");
+    toast(err.message, "bad");
   } finally {
-    $("scan").disabled = false;
+    busy($("scan"), false);
   }
 };
 
@@ -373,13 +563,41 @@ async function describeTracker() {
   }
 }
 
-$("track-folder").onchange = describeTracker;
-$("track-name").onchange = describeTracker;
+// addEventListener, not onchange: the local-only folder check below binds to
+// the same field, and an assignment there silently replaced this one - so on a
+// locally-run copy the "adding to which chain" line stopped updating as soon
+// as the tracker folder was changed.
+$("track-folder").addEventListener("change", describeTracker);
+$("track-name").addEventListener("change", describeTracker);
 
-$("cat-all").onclick = () =>
+// Answering anything in the destination or tracker boxes moves the stepper on.
+["out-box", "track-box"].forEach((id) =>
+  $(id).addEventListener("change", refreshStep));
+
+// Two named cards write the code the API wants into one hidden field, so the
+// rest of the client keeps reading $("stage").value.
+document.querySelectorAll('input[name="stagepick"]').forEach((r) => {
+  r.onchange = () => {
+    $("stage").value = r.value;
+    status($("gen-status"), "");
+    refreshStep();
+  };
+});
+
+// Untracked issues have nothing to say about stages, rounds or tracker files.
+$("track").onchange = () => {
+  $("track-body").hidden = !$("track").checked;
+  refreshStep();
+};
+
+$("cat-all").onclick = () => {
   document.querySelectorAll(".cat").forEach((c) => (c.checked = true));
-$("cat-none").onclick = () =>
+  countCats();
+};
+$("cat-none").onclick = () => {
   document.querySelectorAll(".cat").forEach((c) => (c.checked = false));
+  countCats();
+};
 
 /* A mistyped destination should be caught while the field still has focus, not
    after five minutes of reading PDFs. */
@@ -398,10 +616,9 @@ async function checkFolderField(field, statusEl) {
 }
 
 if (LOCAL) {
-  $("out-folder").onchange = () => checkFolderField($("out-folder"), $("gen-status"));
-  $("track-folder").onchange = () => checkFolderField($("track-folder"), $("gen-status"));
-  $("v-out-folder").onchange = () => checkFolderField($("v-out-folder"), $("v-status"));
-  $("d-out-folder").onchange = () => checkFolderField($("d-out-folder"), $("d-status"));
+  [["out-folder", "gen-status"], ["track-folder", "gen-status"],
+   ["v-out-folder", "v-status"], ["d-out-folder", "d-status"]].forEach(([f, s]) =>
+    $(f).addEventListener("change", () => checkFolderField($(f), $(s))));
 }
 
 /* ---------------------------------------------------------- 2. generate */
@@ -417,13 +634,18 @@ $("generate").onclick = async () => {
   if (!session && !localPath) return;
   const tracking = $("track").checked;
   if (tracking && !$("stage").value) {
-    status($("gen-status"),
-      "Choose IFA or IFF before tracking this issue - it is never guessed.", "bad");
+    const msg = "Say what this issue is for before tracking it - it is never guessed.";
+    status($("gen-status"), msg, "bad");
+    toast(msg, "bad");
+    $("track-box").scrollIntoView({ block: "center" });
+    document.querySelector('input[name="stagepick"]').focus();
     return;
   }
   const categories = [...document.querySelectorAll(".cat:checked")].map((c) => c.value);
   if (!categories.length) {
     status($("gen-status"), "Select at least one drawing category.", "bad");
+    toast("Select at least one drawing category.", "bad");
+    $("cat-box").scrollIntoView({ block: "center" });
     return;
   }
   project = $("m-project").value;
@@ -448,8 +670,10 @@ $("generate").onclick = async () => {
     save_default_tracker: $("track-default").checked,
   });
 
-  $("generate").disabled = true;
-  $("log").hidden = false;
+  busy($("generate"), true);
+  $("result").hidden = false;
+  $("kpis").innerHTML = "";
+  $("saved-lines").innerHTML = "";
   $("log").textContent = `Processing ${localPath || "the uploaded package"}\n` +
     `Categories: ${categories.join(", ")}\n`;
   try {
@@ -464,10 +688,12 @@ $("generate").onclick = async () => {
     if (data.holds) openHolds(data.holds);
   } catch (err) {
     status($("gen-status"), err.message, "bad");
+    toast(err.message, "bad");
+    $("rundetail").open = true;
     $("log").textContent += "\n" + err.message;
   } finally {
     genJob = null;
-    $("generate").disabled = false;
+    busy($("generate"), false);
   }
 };
 
@@ -478,6 +704,46 @@ function downloadLink(data, key, pathKey, label) {
     ? "/download/file?path=" + encodeURIComponent(data[pathKey])
     : "/download/register/" + encodeURIComponent(name);
   return `<a href="${href}">${label}</a>`;
+}
+
+/* The headline numbers of a run. They were a paragraph inside a black log
+   pane, where "7 rows need review" reads the same as every other line; the
+   count that decides whether to tune the patterns and run again now has to be
+   looked at. Tiles, not a chart: four values with nothing to plot between
+   them. Colour is only ever state, and always with the word beside it. */
+function renderKpis(data) {
+  const tiles = [
+    { v: data.total, l: "Drawings read" },
+    { v: data.categories.length, l: `Worksheet${data.categories.length === 1 ? "" : "s"}` },
+  ];
+  tiles.push(data.review
+    ? { v: data.review, l: "Need review", kind: "warn" }
+    : { v: 0, l: "Need review", kind: "good" });
+  if (data.chain) {
+    tiles.push({ v: data.chain.outstanding || 0, l: "Still on hold",
+                 kind: data.chain.outstanding ? "warn" : "good" });
+  }
+  $("kpis").innerHTML = tiles.map((t) =>
+    `<div class="kpi${t.kind ? " " + t.kind : ""}">
+       <div class="v">${esc(t.v)}</div><div class="l">${esc(t.l)}</div>
+     </div>`).join("");
+}
+
+/* Where a file went, and the three things worth doing to it, on one line. */
+function savedLine(label, path, download, actions) {
+  const el = document.createElement("div");
+  el.className = "saved";
+  el.innerHTML =
+    `<span class="mark">&#10003;</span><strong>${esc(label)}</strong>` +
+    `<span class="path">${esc(path)}</span>`;
+  (actions || []).forEach(([text, fn]) => {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.onclick = fn;
+    el.appendChild(b);
+  });
+  if (download) el.insertAdjacentHTML("beforeend", download);
+  $("saved-lines").appendChild(el);
 }
 
 function renderGenerate(data) {
@@ -507,32 +773,55 @@ function renderGenerate(data) {
     trackerPath = data.chain.tracker_path || "";
     lastWritten.tracker = trackerPath;
   }
-  $("log").hidden = false;
   $("log").textContent = lines.join("\n");
 
   lastWritten.register = data.register_path || "";
-  if (LOCAL) {
-    $("open-book").disabled = !lastWritten.register;
-    $("reveal-book").disabled = !lastWritten.register;
-    $("open-tracker").disabled = !lastWritten.tracker;
-  }
+  if (LOCAL) $("open-tracker").disabled = !lastWritten.tracker;
 
-  const links = [downloadLink(data, "register", "register_path", "Download register")];
+  renderKpis(data);
+  $("saved-lines").innerHTML = "";
+  savedLine("Register", data.register_path || data.register,
+    downloadLink(data, "register", "register_path", "Download"),
+    LOCAL && lastWritten.register
+      ? [["Open workbook", () => openWritten(lastWritten.register, false)],
+         ["Show in folder", () => openWritten(lastWritten.register, true)]]
+      : []);
+
   if (data.chain) {
     const href = data.chain.tracker_sandboxed === false
       ? "/download/file?path=" + encodeURIComponent(data.chain.tracker_path)
       : "/download/tracker/" + encodeURIComponent(data.chain.tracker);
-    links.push(`<a href="${href}">Download tracker</a>`);
+    savedLine("Tracker", data.chain.tracker_path || data.chain.tracker,
+      `<a href="${href}">Download</a>`,
+      LOCAL && lastWritten.tracker
+        ? [["Open tracker", () => openWritten(lastWritten.tracker, false)]]
+        : []);
   }
-  $("gen-status").innerHTML =
-    `Register written: ${esc(data.register)} &nbsp; ` + links.join(" &nbsp;|&nbsp; ");
-  $("gen-status").className = "status good";
+
+  $("result").hidden = false;
+  setStep(6);          // past the last one: every step ticked
+
+  status($("gen-status"),
+    data.review
+      ? `${data.review} row(s) could not be read confidently - check the highlighted ` +
+        "rows, or tune the patterns under Settings and run again."
+      : "", data.review ? "bad" : "");
+
+  toast(`Register written: ${data.register}`, "good");
+  $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
   refreshLastRegister();
 }
 
-$("open-book").onclick = () => openWritten(lastWritten.register, false);
-$("reveal-book").onclick = () => openWritten(lastWritten.register, true);
 $("open-tracker").onclick = () => openWritten(lastWritten.tracker, false);
+
+// The long way down a form is not a reason to reach for the mouse.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey)) return;
+  if (topLayer()) return;
+  if ($("run-box").hidden || $("generate").disabled) return;
+  e.preventDefault();
+  $("generate").click();
+});
 
 /* ------------------------------------------------------- 3. hold dialog */
 
@@ -557,8 +846,13 @@ function openHolds(holds) {
       <td><input type="text" class="reason" value="${esc(m.reason)}"></td>
     </tr>`).join("");
   body.querySelectorAll(".reason").forEach((i) => (i.oninput = countHolds));
+  body.querySelectorAll(".holdsel").forEach((c) => {
+    c.setAttribute("aria-label", "Select " + c.closest("tr").dataset.member);
+    c.onchange = () => c.closest("tr").classList.toggle("sel", c.checked);
+  });
   countHolds();
   $("hold-backdrop").hidden = false;
+  $("hold-all").focus();
 }
 
 function countHolds() {
@@ -588,6 +882,7 @@ $("apply-sel").onclick = () => {
 $("hold-cancel").onclick = () => {
   $("hold-backdrop").hidden = true;
   $("log").textContent += "\n\nTracker written, but hold reasons were not recorded.";
+  toast("Tracker written. Hold reasons were not recorded.");
 };
 
 $("hold-save").onclick = async () => {
@@ -600,7 +895,7 @@ $("hold-save").onclick = async () => {
     const value = tr.querySelector(".reason").value.trim();
     if (value) reasons[tr.dataset.member] = value;
   });
-  $("hold-save").disabled = true;
+  busy($("hold-save"), true);
   try {
     const data = await send("/api/tracker/reasons", {
       method: "POST",
@@ -610,10 +905,11 @@ $("hold-save").onclick = async () => {
     $("hold-backdrop").hidden = true;
     $("log").textContent += `\n\nReasons recorded for ${data.saved} member(s).` +
       (data.without_reason ? `\n${data.without_reason} still without a reason.` : "");
+    toast(`Reasons recorded for ${data.saved} member(s).`, "good");
   } catch (err) {
     status($("hold-count"), err.message, "bad");
   } finally {
-    $("hold-save").disabled = false;
+    busy($("hold-save"), false);
   }
 };
 
@@ -804,7 +1100,7 @@ $("validate").onclick = async () => {
   const memPath = $("v-members-path").value.trim();
 
   if (!useLast && !reg && !regPath) {
-    status($("v-status"), "Choose a register workbook, or generate one on tab 1.", "bad");
+    status($("v-status"), "Choose a register workbook, or generate one first.", "bad");
     return;
   }
   if (!mem && !memPath) {
@@ -812,7 +1108,7 @@ $("validate").onclick = async () => {
     return;
   }
 
-  $("validate").disabled = true;
+  busy($("validate"), true);
   status($("v-status"), "Comparing...");
   try {
     const d = await send("/api/validate", {
@@ -859,10 +1155,12 @@ $("validate").onclick = async () => {
                   { key: "count", label: "Count", num: true },
                   { key: "file", label: "Source Files" }] },
     ]);
+    toast(d.verdict, d.clean ? "good" : "bad");
   } catch (err) {
     status($("v-status"), err.message, "bad");
+    toast(err.message, "bad");
   } finally {
-    $("validate").disabled = false;
+    busy($("validate"), false);
   }
 };
 $("v-open").onclick = () => openWritten(lastWritten.validation, false);
@@ -880,7 +1178,7 @@ $("diff").onclick = async () => {
     return;
   }
 
-  $("diff").disabled = true;
+  busy($("diff"), true);
   status($("d-status"), "Comparing...");
   try {
     const { job } = await send("/api/diff", {
@@ -925,11 +1223,13 @@ $("diff").onclick = async () => {
       { title: "Revision Changed", count: d.counts.revised, rows: d.revised_rows, columns: cols },
       { title: "Unchanged", count: d.counts.unchanged, rows: d.unchanged_rows, columns: cols },
     ]);
+    toast(d.verdict, d.identical ? "good" : "bad");
   } catch (err) {
     status($("d-status"), err.message, "bad");
+    toast(err.message, "bad");
   } finally {
     diffJob = null;
-    $("diff").disabled = false;
+    busy($("diff"), false);
   }
 };
 $("d-open").onclick = () => openWritten(lastWritten.diff, false);
@@ -1000,14 +1300,21 @@ $("save-settings").onclick = async () => {
       }),
     });
     status($("s-status"), `Saved to ${d.saved_to}`, "good");
+    toast("Settings saved.", "good");
   } catch (err) {
     status($("s-status"), err.message, "bad");
+    toast(err.message, "bad");
   }
 };
 
 $("reset-settings").onclick = async () => {
-  if (!confirm("Restore the default extraction patterns? Nothing is saved until " +
-               "you press Save settings.")) return;
+  const yes = await ask({
+    title: "Restore defaults?",
+    body: "The default extraction patterns replace what is in the boxes. " +
+          "Nothing is written to disk until you press Save settings.",
+    ok: "Restore",
+  });
+  if (!yes) return;
   try {
     applySettings(await send("/api/settings/defaults"));
     status($("s-status"), "Defaults restored (not yet saved).");
@@ -1023,7 +1330,7 @@ $("run-test").onclick = async () => {
     status($("t-status"), "Choose a drawing PDF to test against.", "bad");
     return;
   }
-  $("run-test").disabled = true;
+  busy($("run-test"), true);
   status($("t-status"), "Reading...");
   try {
     const d = await send("/api/settings/test", {
@@ -1037,7 +1344,7 @@ $("run-test").onclick = async () => {
     status($("t-status"), err.message, "bad");
     $("t-out").textContent = err.message;
   } finally {
-    $("run-test").disabled = false;
+    busy($("run-test"), false);
   }
 };
 $("t-path").onchange = () => $("run-test").click();
@@ -1047,3 +1354,4 @@ $("t-pdf").onchange = () => $("run-test").click();
 
 updateRegSource();
 refreshLastRegister();
+setStep(1);
