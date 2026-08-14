@@ -506,3 +506,98 @@ def test_the_untracked_list_is_editable():
     state.add_issue(IssueEntry(label="one", stage=STAGE_IFA, round_no="1",
                                members=members))
     assert list(build_chain(state, cfg).history) == ["Assembly::A1"]
+
+
+def _tracker_rows(ws) -> list[tuple]:
+    """Data rows of the Tracker sheet: (#, code, category, drawings, added,
+    revised, removed, released, on_hold)."""
+    rows = []
+    seen_header = False
+    for r in ws.iter_rows(values_only=True):
+        if r and r[0] == "#":
+            seen_header = True
+            continue
+        if not seen_header or not r or r[0] is None:
+            continue
+        if isinstance(r[0], str) and r[0].startswith("Members absent"):
+            break
+        rows.append((r[0], r[1], r[6], r[7], r[8], r[9], r[10], r[11], r[12]))
+    return rows
+
+
+def test_the_tracking_table_splits_each_issue_by_category(tmp_path: Path):
+    """An assembly and a single part are not interchangeable work.
+
+    "324 drawings released" says nothing useful until it says how much of it
+    was assemblies.
+    """
+    approved = _members(["A1", "A2"], category="Assembly")
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=approved))
+
+    release = _members(["A1"], category="Assembly")
+    release.update(_members(["P1", "P2", "P3"], category="Part"))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=release))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        rows = _tracker_rows(wb["Tracker"])
+    finally:
+        wb.close()
+
+    by_name = {(r[0], r[2]): r for r in rows}
+    assert by_name[(2, "Assembly")][3] == 1        # drawings
+    assert by_name[(2, "Assembly")][7] == 1        # released
+    assert by_name[(2, "Assembly")][8] == 1        # on hold (A2)
+    assert by_name[(2, "Part")][3] == 3
+    assert by_name[(2, "Part")][4] == 3            # all new to the package
+
+    total = by_name[(2, "All categories")]
+    assert total[3] == 4, "the total must equal the category rows"
+    assert total[4] == 3 and total[7] == 1 and total[8] == 1
+
+
+def test_the_category_rows_sum_to_the_total_row(tmp_path: Path):
+    approved = _members(["A1", "A2", "A3"], category="Assembly")
+    approved.update(_members(["P1"], category="Part"))
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=approved))
+    state.add_issue(IssueEntry(label="release", stage=STAGE_IFF, round_no="1",
+                               members=_members(["A1", "P1"], category="Assembly")))
+
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        rows = _tracker_rows(wb["Tracker"])
+    finally:
+        wb.close()
+
+    for issue_no in {r[0] for r in rows}:
+        parts = [r for r in rows if r[0] == issue_no and r[2] != "All categories"]
+        totals = [r for r in rows if r[0] == issue_no and r[2] == "All categories"]
+        if not totals:
+            continue
+        for col in range(3, 9):
+            # Released and On Hold are left blank on an approval issue, so a
+            # blank total is a zero, not a mismatch.
+            summed = sum(r[col] for r in parts if isinstance(r[col], int))
+            assert (totals[0][col] or 0) == summed, f"column {col} of issue {issue_no}"
+
+
+def test_a_single_category_issue_stays_one_row(tmp_path: Path):
+    """No "All categories" line when there is only one category to total."""
+    state = ChainState(project="P")
+    state.add_issue(IssueEntry(label="approval", stage=STAGE_IFA, round_no="1",
+                               members=_members(["A1"], category="Assembly")))
+    out = write_tracker(build_chain(state), tmp_path / "T.xlsx")
+    wb = load_workbook(out)
+    try:
+        rows = _tracker_rows(wb["Tracker"])
+    finally:
+        wb.close()
+    assert [r[2] for r in rows] == ["Assembly"]
+    assert rows[0][3] == 1

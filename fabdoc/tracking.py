@@ -266,6 +266,10 @@ class PackageChain:
     # issue label -> number of tracked members, which is not entry.total once a
     # category is excluded from tracking.
     totals: dict[str, int] = field(default_factory=dict)
+    # issue label -> category -> count. An assembly and a single part are
+    # different deliverables, so a release of 324 drawings says nothing useful
+    # until it says how much of it was assemblies.
+    totals_by_category: dict[str, "OrderedDict[str, int]"] = field(default_factory=dict)
     # comparison key -> {issue label: revision}. Keyed by the comparison key
     # rather than the mark as written, so a member the detailer spelled
     # "17CH104" in one issue and "17ch104" in the next is one row, not two.
@@ -409,6 +413,11 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
         current = _keys(entry, cfg)
 
         chain.totals[entry.label] = len(current)
+        per_category: "OrderedDict[str, int]" = OrderedDict()
+        for ident in current.values():
+            cat = split_member_id(ident)[0] or "-"
+            per_category[cat] = per_category.get(cat, 0) + 1
+        chain.totals_by_category[entry.label] = per_category
         for key, ident in current.items():
             info = entry.members.get(ident, {})
             chain.history.setdefault(key, {})[entry.label] = info.get("rev", "")

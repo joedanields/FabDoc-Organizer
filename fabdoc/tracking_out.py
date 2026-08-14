@@ -32,6 +32,7 @@ _HOLD_FILL = PatternFill("solid", fgColor="F8CBAD")   # orange: not shipped
 _NEW_FILL = PatternFill("solid", fgColor="FFF2CC")    # amber: new this issue
 # "H" carries the on-hold state in text as well as in colour.
 _HOLD_FONT = Font(bold=True, size=10, color="843C0C")
+_TOTAL_FONT = Font(bold=True, size=10)
 
 
 def _title(ws: Worksheet, text: str, width: int) -> None:
@@ -53,10 +54,46 @@ def _headers(ws: Worksheet, names: list[str], row: int) -> None:
     ws.row_dimensions[row].height = 18
 
 
+def _category_counts(step, chain: PackageChain, label: str) -> "OrderedDict[str, dict]":
+    """One issue's numbers, split by drawing category.
+
+    Every list on a step holds member identities, and an identity carries its
+    category, so the split is a regroup rather than a second pass over the data.
+    """
+    counts: "OrderedDict[str, dict]" = OrderedDict()
+
+    def bucket(name: str) -> dict:
+        return counts.setdefault(name or "-", {"drawings": 0, "added": 0, "revised": 0,
+                                               "removed": 0, "released": 0, "on_hold": 0})
+
+    for category, total in chain.totals_by_category.get(label, {}).items():
+        bucket(category)["drawings"] = total
+
+    if step is None:
+        for category, entry in counts.items():
+            entry["added"] = entry["drawings"]      # a first issue is all new
+        return counts
+
+    for field_name, values in (("added", step.added), ("removed", step.removed),
+                               ("released", step.released)):
+        for ident in values:
+            bucket(split_member_id(ident)[0])[field_name] += 1
+    for ident, _old, _new in step.revised:
+        bucket(split_member_id(ident)[0])["revised"] += 1
+    for hold in step.on_hold:
+        bucket(hold.category or split_member_id(hold.ident)[0])["on_hold"] += 1
+    return counts
+
+
 def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
-    """The tracking table: one row per issue, in the order they were delivered."""
-    columns = ["#", "Code", "Stage", "Round", "Issue Folder", "Date", "Drawings",
-               "Added", "Revised", "Removed", "Released", "On Hold", "Status"]
+    """The tracking table: one row per category per issue, then the issue total.
+
+    A single line per issue answered "how much moved" but never "how much of
+    what", and an assembly and a single part are not interchangeable work.
+    """
+    columns = ["#", "Code", "Stage", "Round", "Issue Folder", "Date", "Category",
+               "Drawings", "Added", "Revised", "Removed", "Released", "On Hold",
+               "Status"]
     _title(ws, "PACKAGE TRACKER", len(columns))
 
     row = 3
@@ -74,7 +111,8 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
         row += 1
 
     row += 1
-    _headers(ws, columns, row)
+    header_row = row
+    _headers(ws, columns, header_row)
     row += 1
 
     # steps[i] describes the move into issues[i + 1]; the first issue has none.
@@ -82,43 +120,56 @@ def _write_summary(ws: Worksheet, chain: PackageChain) -> None:
     for idx, entry in enumerate(chain.issues, start=1):
         step = steps[idx - 1] if idx - 1 < len(steps) else None
         is_iff = entry.stage == STAGE_IFF
-        values = [
-            idx, entry.code, entry.stage, entry.round_no, entry.label,
-            entry.date_text, chain.totals.get(entry.label, entry.total),
-            len(step.added) if step else chain.totals.get(entry.label, entry.total),
-            len(step.revised) if step else 0,
-            len(step.removed) if step else 0,
-            len(step.released) if step and is_iff else "",
-            len(step.on_hold) if step and is_iff else "",
-            step.verdict if step else "first issue",
-        ]
-        for c_idx, value in enumerate(values, start=1):
-            cell = ws.cell(row=row, column=c_idx, value=value)
-            cell.border = _BORDER
-            cell.alignment = _LEFT if c_idx in (5, 13) else _CENTER
-            cell.fill = _IFF_FILL if is_iff else _IFA_FILL
-        row += 1
+        per_category = _category_counts(step, chain, entry.label)
+        verdict = step.verdict if step else "first issue"
+
+        lines = [(name, c, False) for name, c in per_category.items()]
+        if len(lines) != 1:
+            total = {k: sum(c[k] for c in per_category.values())
+                     for k in ("drawings", "added", "revised", "removed",
+                               "released", "on_hold")}
+            lines.append(("All categories", total, True))
+
+        for name, counts, is_total in lines:
+            values = [
+                idx, entry.code, entry.stage, entry.round_no, entry.label,
+                entry.date_text, name,
+                counts["drawings"], counts["added"], counts["revised"],
+                counts["removed"],
+                counts["released"] if is_iff else "",
+                counts["on_hold"] if is_iff else "",
+                verdict if is_total or len(lines) == 1 else "",
+            ]
+            for c_idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=c_idx, value=value)
+                cell.border = _BORDER
+                cell.alignment = _LEFT if c_idx in (5, 14) else _CENTER
+                cell.fill = _IFF_FILL if is_iff else _IFA_FILL
+                if is_total:
+                    cell.font = _TOTAL_FONT
+            row += 1
 
     row += 1
     note = ws.cell(
         row=row, column=1,
         value="Members absent from an IFF release are on hold, not removed - "
-              "fabrication ships the approved scope in slices. See the On Hold sheet "
-              "for the reason recorded against each one.",
+              "fabrication ships the approved scope in slices. See the On Hold "
+              "sheet for the reason recorded against each one.",
     )
     note.font = Font(italic=True, size=9, color="808080")
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(columns))
 
-    ws.freeze_panes = ws.cell(row=row - len(chain.issues) - 1, column=1)
     for idx, width in enumerate(
-        [5, 10, 8, 8, 46, 14, 10, 8, 9, 10, 10, 9, 30], start=1
-    ):
+            [5, 9, 8, 8, 52, 13, 14, 10, 9, 9, 10, 10, 9, 34], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
+    # Below the header, wherever it landed - the label block above it is
+    # shorter when a chain has no approved baseline yet.
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
 
 
 _LEGEND = [
     ("A", "Approval", "ifa"),
-    ("B", "Re-Approval", "ifa"),
+    ("B, C ..", "Re-Approval", "ifa"),
     ("H", "On Hold", "hold"),
     ("0", "Released For Fabrication", "iff"),
     ("1,2..", "Revised As Noted", "iff"),
@@ -146,7 +197,7 @@ def _write_legend(ws: Worksheet, column: int, row: int) -> None:
         text.font = _VALUE_FONT
         text.alignment = _LEFT
         row += 1
-    ws.column_dimensions[get_column_letter(column)].width = 7
+    ws.column_dimensions[get_column_letter(column)].width = 9
     ws.column_dimensions[get_column_letter(column + 1)].width = 26
 
 
