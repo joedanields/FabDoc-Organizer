@@ -40,44 +40,76 @@ body {
 }
 
 /* The logo is printed artwork on a solid white ground, so the masthead is white
-   and the brand colours are carried by everything around it. Cutting the white
-   out to sit the logo on a dark band would take the counters inside the letters
-   and the trust ring with it. */
+   and the brand colours are carried by everything around it. */
 header {
   background: #fff;
-  color: var(--brand-navy);
-  padding: 12px 24px;
+  padding: 10px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 12px 24px;
   border-bottom: 3px solid var(--brand-red);
 }
-header .brand { height: 46px; width: auto; max-width: 100%; }
-header .product { text-align: right; line-height: 1.25; }
-header h1 {
-  margin: 0; font-size: 17px; letter-spacing: .3px;
-  color: var(--brand-navy); font-weight: 600;
-}
-.version { color: var(--muted); font-size: 12px; }
+header .brand { height: 42px; width: auto; max-width: 100%; }
 
-.tabs { display: flex; gap: 2px; background: var(--brand-navy); padding: 0 16px; flex-wrap: wrap; }
-.tab {
-  background: #1c4396; color: #d5def5; border: 0;
-  padding: 9px 18px; cursor: pointer; font-size: 13px;
-  border-radius: 4px 4px 0 0;
-  border-top: 3px solid transparent;
+/* The four occasional screens. Icons, not a tab strip: a tab strip made
+   generating a register look like one option out of five. */
+.tools { display: flex; gap: 4px; flex-wrap: wrap; }
+.tool {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: none; border: 1px solid transparent; color: var(--brand-navy);
+  padding: 7px 12px; border-radius: 5px; font-size: 12.5px; cursor: pointer;
 }
-.tab:hover { background: #2b539f; color: #fff; }
-.tab.active {
-  background: #f4f6f8; color: var(--brand-navy); font-weight: 600;
-  border-top-color: var(--brand-red);
+.tool svg {
+  width: 17px; height: 17px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.9;
+  stroke-linecap: round; stroke-linejoin: round;
 }
+.tool:hover { background: #eef2fb; border-color: #d6ddf2; }
+.tool:active { background: #e3e9f8; }
+
+/* Naming the job, so the page says what it is now the tabs are gone. */
+.masthead { background: var(--brand-navy); color: #fff; padding: 18px 24px 20px; }
+.masthead-inner { max-width: 1180px; }
+.masthead h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: .2px; }
+.masthead p { margin: 4px 0 0; font-size: 13px; color: #c3d0ee; }
+.masthead .version { display: none; }
+
+/* --- the sheet ----------------------------------------------------------- */
+
+.sheet-host {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(10, 20, 50, .45);
+  display: flex; justify-content: center;
+  padding: 3vh 16px;
+  overflow: auto;
+}
+body.sheet-open { overflow: hidden; }
+.sheet {
+  background: #f4f6f8;
+  border-radius: 8px;
+  width: min(1180px, 100%);
+  align-self: flex-start;
+  max-height: 94vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 24px 60px -12px rgba(0, 20, 60, .45);
+  overflow: hidden;
+}
+.sheet-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 12px 18px;
+  background: #fff; border-bottom: 2px solid var(--brand-red);
+}
+.sheet-bar h2 { margin: 0; font-size: 16px; color: var(--brand-navy); font-weight: 600; }
+.sheet-body { overflow: auto; padding: 4px 0 0; }
+.sheet-body .panel { padding-top: 16px; }
+button.ghost { background: #fff; border-color: var(--line); }
 
 @media (max-width: 620px) {
   header { justify-content: center; }
-  header .product { text-align: center; }
+  .tool span { display: none; }
+  .tool { padding: 9px; }
 }
 
 .panel { display: none; padding: 20px 24px 60px; max-width: 1180px; }
@@ -163,6 +195,26 @@ td.num, th.num { text-align: center; }
 .tablewrap tr.sel td { background: #fff7dd; }
 .modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
 .modal-actions .status { margin-right: auto; margin-left: 0; }
+
+/* The empty state: what is about to happen, in order. */
+.steps {
+  list-style: none; counter-reset: step; margin: 22px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 2px; max-width: 560px;
+}
+.steps li {
+  counter-increment: step;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 4px; color: var(--muted); font-size: 13px;
+}
+.steps li::before {
+  content: counter(step);
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: #e4e8f2; color: var(--brand-navy);
+  font-size: 11.5px; font-weight: 700;
+}
+.steps li.on { color: var(--ink); font-weight: 600; }
+.steps li.on::before { background: var(--brand-navy); color: #fff; }
 
 /* --- path rows ----------------------------------------------------------- */
 

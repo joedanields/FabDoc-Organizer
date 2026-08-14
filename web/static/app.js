@@ -18,18 +18,47 @@ document.querySelectorAll(LOCAL ? ".remote-alt-note" : ".local-only")
   .forEach((el) => (el.hidden = true));
 if (LOCAL) document.querySelectorAll(".remote-alt").forEach((el) => (el.hidden = true));
 
-/* ------------------------------------------------------------------ tabs */
+/* ---------------------------------------------------------------- sheets */
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.onclick = () => {
-    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    tab.classList.add("active");
-    $("panel-" + tab.dataset.panel).classList.add("active");
-    if (tab.dataset.panel === "trackers") loadTrackers();
-    if (tab.dataset.panel === "settings") loadSettings();
-    if (tab.dataset.panel === "validate") refreshLastRegister();
-  };
+/* Generating a register is the whole job, so it is the page. The four
+   occasional screens open over it one at a time and close back to it. */
+
+const SHEETS = {
+  trackers: "Package Trackers",
+  validate: "Validate Members",
+  diff:     "Compare Issues",
+  settings: "Extraction Settings",
+};
+
+function openSheet(name) {
+  document.querySelectorAll(".sheet-body .panel")
+    .forEach((p) => p.classList.toggle("active", p.id === "panel-" + name));
+  $("sheet-title").textContent = SHEETS[name] || "";
+  $("sheet-host").hidden = false;
+  document.body.classList.add("sheet-open");
+  $("sheet-close").focus();
+  if (name === "trackers") loadTrackers();
+  if (name === "settings") loadSettings();
+  if (name === "validate") refreshLastRegister();
+}
+
+function closeSheet() {
+  $("sheet-host").hidden = true;
+  document.body.classList.remove("sheet-open");
+}
+
+document.querySelectorAll("button.tool").forEach((b) => {
+  b.onclick = () => openSheet(b.dataset.sheet);
+});
+$("sheet-close").onclick = closeSheet;
+$("sheet-host").onclick = (e) => { if (e.target === $("sheet-host")) closeSheet(); };
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  // Innermost first: a picker or the hold dialog owns Escape before the sheet.
+  if (!$("pick-backdrop").hidden) { closePick(null); return; }
+  if (!$("hold-backdrop").hidden) return;
+  if (!$("sheet-host").hidden) closeSheet();
 });
 
 function status(el, text, kind) {
@@ -253,6 +282,7 @@ function applyScan(data) {
 
   ["meta-box", "cat-box", "out-box", "track-box", "run-box"]
     .forEach((id) => ($(id).hidden = false));
+  $("steps").hidden = true;
   ["open-book", "reveal-book", "open-tracker"].forEach((id) => ($(id).disabled = true));
   $("log").hidden = true;
   status($("gen-status"), "");

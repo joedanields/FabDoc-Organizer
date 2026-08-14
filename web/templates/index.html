@@ -14,19 +14,37 @@
 <header>
   <img class="brand" src="/static/img/struzon-logo.png"
        alt="Struzon Technologies Pvt. Ltd &mdash; Stands For Trust">
-  <div class="product">
-    <h1>{{ app_name }}</h1>
-    <span class="version">{{ version }} &middot; web</span>
-  </div>
+
+  <!-- Generating a register is the whole job; the other four screens are
+       occasional, so they sit here as icons instead of taking a tab strip
+       that made the main task look like one option out of five. -->
+  <nav class="tools" aria-label="Other screens">
+    <button class="tool" data-sheet="trackers" title="Package trackers">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>Trackers</span>
+    </button>
+    <button class="tool" data-sheet="validate" title="Validate against the model">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+      <span>Validate</span>
+    </button>
+    <button class="tool" data-sheet="diff" title="Compare two issues">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v12a3 3 0 0 0 3 3h5M16 20V8a3 3 0 0 0-3-3H8"/><circle cx="6" cy="4" r="2"/><circle cx="18" cy="20" r="2"/></svg>
+      <span>Compare</span>
+    </button>
+    <button class="tool" data-sheet="settings" title="Extraction settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11.5 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9 2 2 0 1 1 0 4 1.7 1.7 0 0 0-1 .1z"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
 </header>
 
-<nav class="tabs">
-  <button class="tab active" data-panel="generate">1. Generate &amp; Track</button>
-  <button class="tab" data-panel="validate">2. Validate Members</button>
-  <button class="tab" data-panel="diff">3. Compare Issues</button>
-  <button class="tab" data-panel="settings">4. Extraction Settings</button>
-  <button class="tab" data-panel="trackers">5. Package Trackers</button>
-</nav>
+<div class="masthead">
+  <div class="masthead-inner">
+    <h1>{{ app_name }}</h1>
+    <p>Read an issue folder, write its register, and add it to the package tracker.</p>
+    <span class="version">{{ version }}</span>
+  </div>
+</div>
 
 <!-- ------------------------------------------------------------ generate -->
 <section class="panel active" id="panel-generate">
@@ -55,6 +73,16 @@
 
     <span id="scan-status" class="status"></span>
   </fieldset>
+
+  <!-- Everything below appears once a folder is scanned, so an untouched page
+       would otherwise be one box and a lot of nothing. -->
+  <ol class="steps" id="steps">
+    <li class="on">Point at the issue folder</li>
+    <li>Check the project details and categories</li>
+    <li>Choose where the register and tracker go</li>
+    <li>Say whether it is for approval or fabrication</li>
+    <li>Generate</li>
+  </ol>
 
   <fieldset id="meta-box" hidden>
     <legend>Project details &mdash; read from the folder name, edit if needed</legend>
@@ -136,6 +164,15 @@
 
   <pre id="log" class="log" hidden></pre>
 </section>
+
+<!-- The four occasional screens. One set of chrome, one at a time. -->
+<div class="sheet-host" id="sheet-host" hidden>
+  <div class="sheet">
+    <div class="sheet-bar">
+      <h2 id="sheet-title">Validate Members</h2>
+      <button id="sheet-close" class="ghost" title="Close (Esc)">Close</button>
+    </div>
+    <div class="sheet-body">
 
 <!-- ------------------------------------------------------------ validate -->
 <section class="panel" id="panel-validate">
@@ -326,6 +363,10 @@
   </fieldset>
   <div id="tracker-detail"></div>
 </section>
+
+    </div>
+  </div>
+</div>
 
 <!-- ------------------------------------------------------- hold modal -->
 <div class="backdrop" id="hold-backdrop" hidden>
