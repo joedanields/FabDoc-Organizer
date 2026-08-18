@@ -23,7 +23,8 @@ from .memberlist import read_member_list
 from .register import build_register
 from .register_io import read_register
 from .tracking import (STAGE_IFF, STAGES, ChainState, IssueEntry, apply_reasons,
-                       build_chain, load_state, project_name_from, save_state,
+                       CLASH_NEXT_ROUND, CLASH_OVERWRITE, build_chain,
+                       load_state, project_name_from, save_state,
                        snapshot_register, state_path_for)
 from .tracking_out import write_tracker
 from .validate import validate
@@ -132,6 +133,37 @@ def _report_holds(chain, tracker: Path) -> None:
         print(f'  python -m fabdoc track "{tracker}" --reason "why they are held"')
 
 
+def _resolve_clash(state, entry, clash, choice: str) -> str | None:
+    """Decide what to do about a round that is already tracked. None cancels.
+
+    The engineer either pointed at the wrong tracker or is re-issuing that
+    round, and the two want opposite things done, so an unattended run takes
+    the answer that destroys nothing and says loudly what it did.
+    """
+    nxt = state.next_round(entry.stage)
+    print()
+    print(f"{clash.code} is already tracked in this chain:")
+    print(f"  existing: {clash.label}   ({clash.total} drawing(s))")
+    print(f"  adding:   {entry.label}   ({entry.total} drawing(s))")
+
+    if choice != "ask":
+        return choice
+    if not sys.stdin.isatty():
+        print(f"Nobody at the terminal: adding it as {entry.stage}-{nxt} rather than "
+              f"overwriting. Pass --on-clash overwrite to replace {clash.code}.")
+        return CLASH_NEXT_ROUND
+
+    prompt = (f"[o]verwrite {clash.code}, add as [{entry.stage}-{nxt}], or [c]ancel? ")
+    while True:
+        answer = input(prompt).strip().lower()
+        if answer in ("o", "overwrite"):
+            return CLASH_OVERWRITE
+        if answer in ("", "n", "next", nxt.lower()):
+            return CLASH_NEXT_ROUND
+        if answer in ("c", "cancel", "q"):
+            return None
+
+
 def _track_issue(args: argparse.Namespace, settings, folder: Path, register) -> Path:
     """Append one issue to its package chain and rewrite the tracker."""
     tracker = Path(args.tracker) if args.tracker else _default_tracker(settings, folder)
@@ -140,14 +172,25 @@ def _track_issue(args: argparse.Namespace, settings, folder: Path, register) -> 
     if not state.project:
         state.project = project_name_from(register.meta.title)
 
-    state.add_issue(IssueEntry(
+    entry = IssueEntry(
         label=folder.name,
         stage=args.stage.upper(),
         round_no=args.round or register.meta.issue_no,
         date_text=register.meta.date_display,
         folder=str(folder),
         members=snapshot_register(register, settings),
-    ))
+    )
+
+    clash = state.clash_for(entry)
+    if clash is not None:
+        on_clash = _resolve_clash(state, entry, clash, getattr(args, "on_clash", "ask"))
+        if on_clash is None:
+            print("Tracker left alone.")
+            return tracker
+        state.add_issue(entry, on_clash)
+        print(f"Tracked as {entry.code}.")
+    else:
+        state.add_issue(entry)
 
     chain = build_chain(state, settings)
     if args.hold_reason:
@@ -364,6 +407,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "in the output folder)")
     p.add_argument("--hold-reason", default=None,
                    help="Reason to record against members this IFF release left behind")
+    p.add_argument("--on-clash", choices=["ask", CLASH_OVERWRITE, CLASH_NEXT_ROUND],
+                   default="ask",
+                   help="What to do when that stage and round are already tracked "
+                        "against another folder: overwrite that issue, add this one "
+                        "as the next round, or ask (default; falls back to 'next' "
+                        "when nobody is at the terminal)")
     p.set_defaults(func=cmd_generate)
 
     p = sub.add_parser("track", help="Rebuild the package tracker and show what is on hold")
