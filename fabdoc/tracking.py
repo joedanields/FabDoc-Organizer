@@ -44,6 +44,13 @@ STAGE_IFF = "IFF"   # Issued For Fabrication
 
 STAGES = (STAGE_IFA, STAGE_IFF)
 
+# What to do when the stage and round being added are already tracked against a
+# different folder. There is no safe guess: overwriting throws away an issue the
+# engineer may still need, and renumbering silently invents a round that never
+# went out. The caller asks; these are the two answers.
+CLASH_OVERWRITE = "overwrite"    # this folder takes the round, the old one goes
+CLASH_NEXT_ROUND = "next"        # this folder becomes the next round instead
+
 # "Stairs at Zone 1 and Zone 2 for Re Approval" -> "Stairs at Zone 1 and Zone 2".
 _PURPOSE_CLAUSE = re.compile(
     r"\s+for\s+(?:re[\s-]*)?(?:approval|fabrication|construction|review|comment)\b.*$",
@@ -287,6 +294,10 @@ class PackageChain:
     # member: absence from a fabrication release is a hold, not a removal. A
     # member that comes back in a later issue is removed from this map.
     dropped_at: dict = field(default_factory=dict)
+    # comparison key -> {issue label: what is wrong with the revision there}.
+    # A revision ladder that skips a rung is a detailing slip, not a state the
+    # package is in, so it is kept apart from the counts above.
+    rev_errors: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
 
     def band_of(self, ident: str) -> tuple[str, str]:
         """The band a member identity sits in, ("", "") when it has none."""
@@ -332,18 +343,78 @@ class ChainState:
                 return idx
         return -1
 
-    def add_issue(self, entry: IssueEntry) -> None:
+    def issue_at(self, stage: str, round_no: str) -> IssueEntry | None:
+        """The issue occupying one stage and round, if any.
+
+        An issue with no round number occupies no slot: there is nothing to
+        clash with, and two unnumbered issues are not the same delivery.
+        """
+        stage = (stage or "").strip().upper()
+        wanted = str(round_no or "").strip()
+        if not wanted:
+            return None
+        for entry in self.issues:
+            if entry.stage.strip().upper() == stage and str(entry.round_no).strip() == wanted:
+                return entry
+        return None
+
+    def clash_for(self, entry: IssueEntry) -> IssueEntry | None:
+        """The issue already holding this one's stage and round, if it is another folder.
+
+        Re-processing the *same* folder is not a clash - that is the ordinary
+        "patterns got tuned, run it again" case, and it updates in place.
+        """
+        existing = self.issue_at(entry.stage, entry.round_no)
+        if existing is None or existing.label == entry.label:
+            return None
+        return existing
+
+    def next_round(self, stage: str) -> str:
+        """The round number a new issue of this stage would take.
+
+        One past the highest tracked, not the first gap: the rounds are
+        deliveries in the order they went out, so a package sitting at IFA-5
+        takes IFA-6 even if nothing was ever tracked as IFA-3.
+        """
+        stage = (stage or "").strip().upper()
+        used = [int(str(e.round_no).strip()) for e in self.issues
+                if e.stage.strip().upper() == stage and str(e.round_no).strip().isdigit()]
+        return str(max(used) + 1) if used else "1"
+
+    def add_issue(self, entry: IssueEntry,
+                  on_clash: str = CLASH_NEXT_ROUND) -> IssueEntry:
         """Add an issue, replacing an earlier run of the same folder.
 
         Re-processing a folder is routine - patterns get tuned and the register
         regenerated - and must update that issue in place rather than appending a
         duplicate that would read as a new revision round.
+
+        A *different* folder landing on a round that is already tracked is the
+        other case: the engineer either pointed at the wrong tracker, or is
+        re-issuing that round. ``on_clash`` says which - see ``clash_for``, which
+        the caller is expected to have asked about. Returns the entry as it was
+        actually added, whose round may have moved on.
         """
+        clash = self.clash_for(entry)
+        if clash is not None and on_clash == CLASH_OVERWRITE:
+            # In place, not appended: the issues replay in list order, so a
+            # replacement for IFA-2 belongs between IFA-1 and IFA-3.
+            slot = self.issues.index(clash)
+            self.issues[slot] = entry
+            # This folder may also have been tracked as some other round. It did
+            # not happen twice - it moved here.
+            self.issues = [e for idx, e in enumerate(self.issues)
+                           if idx == slot or e.label != entry.label]
+            return entry
+        if clash is not None:
+            entry.round_no = self.next_round(entry.stage)
+
         existing = self.index_of(entry.label)
         if existing >= 0:
             self.issues[existing] = entry
         else:
             self.issues.append(entry)
+        return entry
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -528,7 +599,102 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
             chain.steps.append(step)
         previous = entry
 
+    chain.rev_errors = revision_faults(chain)
     return chain
+
+
+# ---------------------------------------------------------------------------
+# Revision order
+# ---------------------------------------------------------------------------
+
+# A revision is on one of two ladders. Approval runs on letters - A, then B, C
+# for each re-approval round - and fabrication runs on numbers, 0 at release and
+# 1, 2 for revised-as-noted. Anything else (a "P1", a blank) is not on a ladder
+# and is left alone rather than guessed at.
+_ALPHA_REV = re.compile(r"^[A-Z]+$")
+_NUMERIC_REV = re.compile(r"^[0-9]+$")
+
+LADDER_ALPHA = "alpha"
+LADDER_NUMERIC = "num"
+
+# What each ladder starts at, for the message the reader sees.
+_LADDER_START = {LADDER_ALPHA: "A", LADDER_NUMERIC: "0"}
+_LADDER_NAME = {LADDER_ALPHA: "approval", LADDER_NUMERIC: "fabrication"}
+
+
+def revision_rank(text: str) -> tuple[str, int] | None:
+    """``("alpha", 1)`` for "B", ``("num", 2)`` for "2", ``None`` off-ladder.
+
+    Position is zero-based on both ladders, so the rung a revision *should*
+    start on is 0 whichever ladder it is on.
+    """
+    rev = (text or "").strip().upper()
+    if _NUMERIC_REV.match(rev):
+        return (LADDER_NUMERIC, int(rev))
+    if _ALPHA_REV.match(rev):
+        pos = 0
+        for ch in rev:                      # A..Z, then AA - as Excel counts columns
+            pos = pos * 26 + (ord(ch) - 64)
+        return (LADDER_ALPHA, pos - 1)
+    return None
+
+
+def revision_label(ladder: str, pos: int) -> str:
+    """The revision that sits on a rung: ``("alpha", 2)`` -> "C"."""
+    if ladder == LADDER_NUMERIC:
+        return str(pos)
+    text = ""
+    pos += 1
+    while pos > 0:
+        pos, rem = divmod(pos - 1, 26)
+        text = chr(65 + rem) + text
+    return text
+
+
+def revision_faults(chain: "PackageChain") -> "OrderedDict[str, dict[str, str]]":
+    """Where a member's revisions skip a rung, keyed by member then issue.
+
+    A revision ladder is climbed one rung at a time: the first approval issue of
+    a drawing is Rev A and each re-approval steps one letter, the first
+    fabrication release is Rev 0 and each revised-as-noted steps one number. A
+    member that appears at Rev B with no Rev A behind it, or that goes A then C,
+    means an issue was missed - either the drawing was mis-titled or a whole
+    folder never reached the tracker. Both read as an ordinary revision on the
+    grid, which is exactly why they survive to a progress meeting unnoticed.
+
+    Only the offending step is reported. Once a member has jumped to C the rest
+    of its life is consistent with itself, and colouring every later cell would
+    bury the one issue where something actually went wrong.
+    """
+    faults: "OrderedDict[str, dict[str, str]]" = OrderedDict()
+    labels = [e.label for e in chain.issues]
+
+    for key, per_issue in chain.history.items():
+        last: dict[str, int] = {}
+        for label in labels:
+            raw = (per_issue.get(label) or "").strip()
+            rank = revision_rank(raw)
+            if rank is None:
+                continue
+            ladder, pos = rank
+            prior = last.get(ladder)
+            note = ""
+            if prior is None:
+                if pos != 0:
+                    note = (f"starts at {raw.upper()} - {_LADDER_NAME[ladder]} "
+                            f"revisions start at {_LADDER_START[ladder]}")
+            elif pos > prior + 1:
+                note = (f"jumps {revision_label(ladder, prior)} to {raw.upper()} - "
+                        f"{revision_label(ladder, prior + 1)} is missing")
+            elif pos < prior:
+                note = f"goes back {revision_label(ladder, prior)} to {raw.upper()}"
+            if note:
+                faults.setdefault(key, {})[label] = note
+            # Carry the rung on even when it was wrong, so one missed issue is
+            # one flagged cell rather than a red streak to the end of the row.
+            last[ladder] = pos
+
+    return faults
 
 
 def apply_reasons(state: ChainState, reasons: dict[str, str],
