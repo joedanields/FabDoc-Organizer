@@ -47,8 +47,9 @@ from fabdoc.memberlist import (preview_columns, read_member_list, sheet_names)
 from fabdoc.register import Register, build_register
 from fabdoc.register_io import read_register
 from fabdoc.tracking import (STAGE_IFF, STAGES, IssueEntry, apply_reasons,
-                             build_chain, load_state, project_name_from,
-                             save_state, snapshot_register, state_path_for)
+                             CLASH_NEXT_ROUND, CLASH_OVERWRITE, build_chain,
+                             load_state, project_name_from, save_state,
+                             snapshot_register, state_path_for)
 from fabdoc.tracking_out import write_tracker
 from fabdoc.validate import validate
 
@@ -487,6 +488,7 @@ async def api_generate(
     tracker_folder: str = Form(""),
     tracker_name: str = Form(""),
     save_default_tracker: bool = Form(False),
+    on_clash: str = Form(CLASH_NEXT_ROUND),
 ):
     """Start the register build. Returns a job id; the page polls it for progress."""
     host = _client(request)
@@ -585,7 +587,7 @@ async def api_generate(
         if track and tracker is not None:
             job.progress(job.total, job.total, "Updating the tracker...")
             payload.update(_track(register, root, stage, round_no, settings,
-                                  project, tracker))
+                                  project, tracker, on_clash))
         if uploaded:
             ws.clear_session(uploaded)
         return payload
@@ -594,7 +596,8 @@ async def api_generate(
 
 
 def _track(register, root: Path, stage: str, round_no: str, settings,
-           project: str, tracker: Path) -> dict:
+           project: str, tracker: Path,
+           on_clash: str = CLASH_NEXT_ROUND) -> dict:
     # The project keys the tracker, so issues sharing it chain together. It is
     # derived from the folder name but stays editable: an unanticipated naming
     # convention should be a correction, not a silent split into two trackers.
@@ -603,18 +606,30 @@ def _track(register, root: Path, stage: str, round_no: str, settings,
     if not state.project:
         state.project = project
 
-    state.add_issue(IssueEntry(
+    entry = IssueEntry(
         label=root.name, stage=stage,
         round_no=round_no or register.meta.issue_no,
         date_text=register.meta.date_display, folder=str(root),
         members=snapshot_register(register, settings),
-    ))
+    )
+    # The page asked about a clash before starting the run - see the round block
+    # in /api/tracker/info - so the answer arrives with the request. Anything
+    # else than an explicit overwrite keeps both issues.
+    clash = state.clash_for(entry)
+    taken = clash.code if clash is not None else ""
+    state.add_issue(entry, CLASH_OVERWRITE if on_clash == CLASH_OVERWRITE
+                    else CLASH_NEXT_ROUND)
     chain = build_chain(state, settings)
     save_state(state, state_path_for(tracker))
     write_tracker(chain, tracker)
     disk.remember(tracker)
 
     result = {"chain": _chain_payload(chain, tracker)}
+    if taken:
+        result["round"] = {
+            "taken": taken, "code": entry.code,
+            "overwritten": on_clash == CLASH_OVERWRITE,
+        }
     step = chain.steps[-1] if chain.steps else None
 
     # A release that left approved members behind is the moment to ask why.
@@ -690,6 +705,9 @@ async def api_tracker_info(request: Request):
     """
     body = await request.json()
     raw = str(body.get("path") or "").strip().strip('"')
+    stage = str(body.get("stage") or "").strip().upper()
+    round_no = str(body.get("round") or "").strip()
+    label = str(body.get("label") or "").strip()
     if not raw:
         return {"exists": False}
     tracker = Path(raw)
@@ -700,7 +718,7 @@ async def api_tracker_info(request: Request):
         return {"exists": tracker.exists(), "tracked": False, "path": str(tracker)}
 
     state = load_state(state_file)
-    return {
+    info = {
         "exists": True,
         "tracked": True,
         "path": str(tracker),
@@ -709,6 +727,18 @@ async def api_tracker_info(request: Request):
         "last": state.issues[-1].label if state.issues else "",
         "stages": [e.code for e in state.issues],
     }
+    # Asked before the run, not after: a clash is answered by choosing between
+    # two issues, and by the time the drawings have been read the page would be
+    # asking about a chain it had already changed.
+    if stage in STAGES and round_no:
+        info["next_round"] = state.next_round(stage)
+        held = state.issue_at(stage, round_no)
+        if held is not None and (not label or held.label != label):
+            info["clash"] = {
+                "code": held.code, "label": held.label, "drawings": held.total,
+                "date": held.date_text,
+            }
+    return info
 
 
 @app.get("/api/trackers")
