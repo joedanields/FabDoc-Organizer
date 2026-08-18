@@ -329,6 +329,40 @@ python -m fabdoc generate "<folder>" --track --stage IFF --round 1
 python -m fabdoc track "Package Tracker.xlsx"
 ```
 
+### When that round is already tracked
+
+Picking the wrong tracker and re-issuing a round look identical from the outside
+and want opposite things done, so neither is guessed. If the stage and round you
+typed are already held by **another folder**, you are asked before a single PDF
+is read:
+
+> **IFA-2 is already tracked.** This tracker already holds IFA-2 for
+> "15. Zone 1 for Approval" (119 drawing(s)). You are adding
+> "18. Zone 2 for Approval" (96 drawing(s)).
+
+| Answer | What happens |
+| --- | --- |
+| **Add as IFA-3** | Both issues are kept; this one becomes the next round |
+| **Overwrite IFA-2** | This folder replaces that issue and takes its place in the chain |
+| **Cancel** | Nothing is written |
+
+The next round is one past the highest tracked, not the first gap — the rounds
+are deliveries in the order they went out. Overwriting is a real replacement:
+the old snapshot goes, and the workbook is rebuilt from the chain without it.
+
+Re-processing the **same** folder is not a clash and is never asked about —
+tuning patterns and running the folder again updates that issue in place, which
+is the ordinary case.
+
+On the command line the same question is asked at the prompt, and an unattended
+run (a script, a pipe) takes the answer that destroys nothing:
+
+```bash
+python -m fabdoc generate "<folder>" --track --stage IFA --round 2 --on-clash overwrite
+```
+
+`--on-clash` takes `ask` (default), `overwrite` or `next`.
+
 ### The tracker's four sheets
 
 | Sheet | What it answers |
@@ -471,6 +505,7 @@ sits to the right of every history sheet:
 | `H` | On Hold |
 | `0` | Released For Fabrication |
 | `1, 2 …` | Revised As Noted |
+| red cell | Revision Out Of Order |
 
 Members are banded by sequence, exactly as in the register — `SEQ 172`, then
 `TYPE CH` for single parts — so a history sheet of 900 members still reads as
@@ -481,6 +516,16 @@ loses the fill, and on hold is the one state the shop floor acts on.
 
 An empty cell means the member was not in that issue and nothing is owed: either
 it already shipped in another release, or it was dropped at re-approval.
+
+**A red revision skipped a rung.** Approval runs on letters and fabrication on
+numbers, and each ladder is climbed one rung at a time: a drawing's first
+approval issue is Rev `A` and every re-approval steps one letter, its first
+release is Rev `0` and every revised-as-noted steps one number. A member that
+turns up at `B` with no `A` behind it, or that goes `A` then `C`, means an issue
+was missed — either the drawing was mis-titled or a whole folder never reached
+the tracker. The revision is still printed, so `B` in red reads as "this is a B
+and the A never came"; hover the cell for the step that is missing. Only the
+offending cell is coloured, not the rest of the row.
 
 The Tracker sheet carries two tables. The first is one row per drawing category
 per issue, then a bold total: what moved in each delivery, and how much of it was
