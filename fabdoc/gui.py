@@ -29,7 +29,8 @@ from .memberlist import MemberList, preview_columns, read_member_list, sheet_nam
 from .register import Register, build_register
 from .register_io import read_register
 from .tracking import (STAGE_IFA, STAGE_IFF, STAGES, ChainState, HoldRecord,
-                       IssueEntry, apply_reasons, build_chain, load_state,
+                       CLASH_NEXT_ROUND, CLASH_OVERWRITE, IssueEntry,
+                       apply_reasons, build_chain, load_state,
                        project_name_from, save_state, snapshot_register,
                        state_path_for)
 from .tracking_out import write_tracker
@@ -54,6 +55,76 @@ def _asset(name: str) -> Path | None:
     """
     path = ASSETS / name
     return path if path.is_file() else None
+
+
+class RoundClashDialog(tk.Toplevel):
+    """Ask what to do when a round is already tracked against another folder.
+
+    Two things look identical from here and mean opposite things. The engineer
+    may have pointed at the wrong tracker, in which case the issue that is
+    already there is somebody else's work and must not be touched; or they are
+    re-issuing that round after a correction, in which case the old snapshot is
+    exactly what should go. Guessing either way silently rewrites the chain the
+    whole workbook is replayed from, so it is asked instead.
+    """
+
+    def __init__(self, master: tk.Misc, existing: IssueEntry, incoming: IssueEntry,
+                 next_round: str) -> None:
+        super().__init__(master)
+        self.title(f"{__app_name__} - round already tracked")
+        self.transient(master)
+        self.resizable(False, False)
+        self.result: str | None = None
+
+        frame = ttk.Frame(self, padding=PAD * 2)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            frame, text=f"{existing.code} is already tracked.",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            frame,
+            text="\n".join([
+                f"This tracker already holds {existing.code} for:",
+                f"    {existing.label}   ({existing.total} drawing(s))",
+                "",
+                "You are adding:",
+                f"    {incoming.label}   ({incoming.total} drawing(s))",
+            ]),
+            style="Sub.TLabel", justify="left",
+        ).pack(anchor="w", pady=(PAD, PAD))
+        ttk.Label(
+            frame,
+            text=f"Overwrite replaces that issue with this folder, keeping its place "
+                 f"in the chain. Add as {incoming.stage}-{next_round} keeps both, this "
+                 f"one as the next round.",
+            style="Sub.TLabel", wraplength=520, justify="left",
+        ).pack(anchor="w", pady=(0, PAD * 2))
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Cancel",
+                   command=self._cancel).pack(side="right")
+        ttk.Button(buttons, text=f"Overwrite {existing.code}",
+                   command=lambda: self._choose(CLASH_OVERWRITE)).pack(
+                       side="right", padx=(0, PAD))
+        add = ttk.Button(buttons, text=f"Add as {incoming.stage}-{next_round}",
+                         command=lambda: self._choose(CLASH_NEXT_ROUND))
+        add.pack(side="right", padx=(0, PAD))
+        add.focus_set()          # the answer that keeps both is the safe default
+
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda _e: self._cancel())
+        self.grab_set()
+
+    def _choose(self, how: str) -> None:
+        self.result = how
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.result = None
+        self.destroy()
 
 
 class HoldReasonDialog(tk.Toplevel):
@@ -1066,6 +1137,7 @@ class FabDocApp(ttk.Frame):
         Runs on the UI thread: the chain is built from the register already in
         memory, so nothing here re-reads a PDF.
         """
+        settings = self._settings_from_ui()
         tracker = Path(self.tracker_var.get().strip())
         state_file = state_path_for(tracker)
         state = load_state(state_file)
@@ -1075,16 +1147,35 @@ class FabDocApp(ttk.Frame):
             state.project = project_name_from(reg.meta.title)
 
         folder = Path(self.folder_var.get().strip())
-        state.add_issue(IssueEntry(
+        entry = IssueEntry(
             label=folder.name,
             stage=stage,
             round_no=self.round_var.get().strip() or reg.meta.issue_no,
             date_text=reg.meta.date_display,
             folder=str(folder),
             members=snapshot_register(reg, settings),
-        ))
+        )
 
-        settings = self._settings_from_ui()
+        # Another folder already sitting on this stage and round is either the
+        # wrong tracker or a re-issue, and the two want opposite things done.
+        clash = state.clash_for(entry)
+        on_clash = CLASH_NEXT_ROUND
+        if clash is not None:
+            dialog = RoundClashDialog(self.master, clash, entry,
+                                      state.next_round(entry.stage))
+            self.master.wait_window(dialog)
+            if dialog.result is None:
+                self._log(f"Tracker not updated - {clash.code} is already tracked "
+                          f"as \"{clash.label}\".")
+                self._set_status("Tracker not updated.")
+                return
+            on_clash = dialog.result
+
+        state.add_issue(entry, on_clash)
+        # add_issue may have moved the round on, and the round box is what the
+        # next issue starts from - it has to say where this one actually landed.
+        self.round_var.set(entry.round_no)
+
         chain = build_chain(state, settings)
         step = chain.steps[-1] if chain.steps else None
 
@@ -1093,7 +1184,7 @@ class FabDocApp(ttk.Frame):
         if stage == STAGE_IFF and step and step.on_hold:
             dialog = HoldReasonDialog(
                 self.master, list(step.on_hold),
-                release_label=f"{folder.name}   [{stage}-{self.round_var.get().strip()}]",
+                release_label=f"{folder.name}   [{entry.code}]",
                 released=len(step.released),
             )
             self.master.wait_window(dialog)
