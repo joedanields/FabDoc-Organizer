@@ -16,10 +16,10 @@ from openpyxl import load_workbook
 from conftest import make_drawing
 
 from fabdoc.register import build_register
-from fabdoc.tracking import (STAGE_IFA, STAGE_IFF, ChainState, IssueEntry,
-                             apply_reasons, build_chain, load_state,
-                             project_name_from, save_state, snapshot_register,
-                             state_path_for)
+from fabdoc.tracking import (CLASH_NEXT_ROUND, CLASH_OVERWRITE, STAGE_IFA,
+                             STAGE_IFF, ChainState, IssueEntry, apply_reasons,
+                             build_chain, load_state, project_name_from,
+                             save_state, snapshot_register, state_path_for)
 from fabdoc.tracking_out import write_tracker
 
 
@@ -861,3 +861,159 @@ def test_released_plus_held_plus_dropped_accounts_for_every_member(tmp_path: Pat
     members, released, held, dropped = total[3], total[4], total[5], total[6]
     assert (members, released, held, dropped) == (3, 1, 1, 1)
     assert released + held + dropped == members
+
+
+# ---------------------------------------------------------------- revision order
+
+
+def test_a_first_revision_that_is_not_a_is_a_fault():
+    """Rev B with no Rev A behind it means an approval round never arrived."""
+    state = ChainState()
+    state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A", "A2": "B"}))
+    faults = build_chain(state).rev_errors
+    assert key("A1") not in faults
+    assert "starts at B" in faults[key("A2")]["IFA-1"]
+
+
+def test_a_first_release_that_is_not_rev_zero_is_a_fault():
+    state = ChainState()
+    state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("IFF-1", STAGE_IFF, "1", {"A1": "1"}))
+    faults = build_chain(state).rev_errors
+    assert "fabrication revisions start at 0" in faults[key("A1")]["IFF-1"]
+
+
+def test_a_skipped_letter_is_a_fault_and_only_the_skip_is_flagged():
+    """One missed issue is one flagged cell, not a red streak to the row's end."""
+    state = ChainState()
+    state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("IFA-2", STAGE_IFA, "2", {"A1": "C"}))
+    state.add_issue(issue("IFA-3", STAGE_IFA, "3", {"A1": "D"}))
+    faults = build_chain(state).rev_errors
+    assert list(faults[key("A1")]) == ["IFA-2"]
+    assert "B is missing" in faults[key("A1")]["IFA-2"]
+
+
+def test_the_two_ladders_are_counted_apart():
+    """Letters run the approval ladder, numbers the fabrication one."""
+    state = ChainState()
+    state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("IFA-2", STAGE_IFA, "2", {"A1": "B"}))
+    state.add_issue(issue("IFF-1", STAGE_IFF, "1", {"A1": "0"}))
+    state.add_issue(issue("IFF-2", STAGE_IFF, "2", {"A1": "1"}))
+    assert build_chain(state).rev_errors == {}
+
+
+def test_an_unchanged_revision_is_not_a_fault():
+    """A member reissued without change keeps its rung."""
+    state = ChainState()
+    state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("IFA-2", STAGE_IFA, "2", {"A1": "A"}))
+    assert build_chain(state).rev_errors == {}
+
+
+def test_an_out_of_order_revision_is_coloured_and_explained(tmp_path: Path):
+    state = ChainState()
+    state.add_issue(issue("IFA-1", STAGE_IFA, "1", {"A1": "A", "A2": "B"}))
+    out = write_tracker(build_chain(state), tmp_path / "tracker.xlsx")
+
+    wb = load_workbook(out)
+    try:
+        ws = wb["History - Assembly"]
+        rows = {ws.cell(row=r, column=1).value: r for r in (4, 5)}
+        good = ws.cell(row=rows["A1"], column=3)
+        bad = ws.cell(row=rows["A2"], column=3)
+        assert bad.value == "B"                      # the revision still shows
+        assert bad.fill.fgColor.rgb.endswith("FFC7CE")
+        assert good.fill.fgColor.rgb != bad.fill.fgColor.rgb
+        assert "starts at B" in bad.comment.text
+        legend = [c.value for col in ws.iter_cols(min_col=6) for c in col]
+        assert "Revision Out Of Order" in legend
+    finally:
+        wb.close()
+
+
+# ------------------------------------------------------------ round clashes
+
+
+def test_re_running_the_same_folder_is_not_a_clash():
+    """Patterns get tuned and the folder re-processed - that is not a new round."""
+    state = ChainState()
+    state.add_issue(issue("15. Zone 1 for Approval", STAGE_IFA, "1", {"A1": "A"}))
+    again = issue("15. Zone 1 for Approval", STAGE_IFA, "1", {"A1": "A", "A2": "A"})
+    assert state.clash_for(again) is None
+    state.add_issue(again)
+    assert len(state.issues) == 1 and state.issues[0].total == 2
+
+
+def test_another_folder_on_a_tracked_round_is_a_clash():
+    state = ChainState()
+    state.add_issue(issue("15. Zone 1 for Approval", STAGE_IFA, "2", {"A1": "A"}))
+    incoming = issue("18. Zone 2 for Approval", STAGE_IFA, "2", {"B1": "A"})
+    clash = state.clash_for(incoming)
+    assert clash is not None and clash.label == "15. Zone 1 for Approval"
+
+
+def test_the_same_round_of_the_other_stage_is_not_a_clash():
+    """IFA-1 and IFF-1 are different deliveries that share a number."""
+    state = ChainState()
+    state.add_issue(issue("approval", STAGE_IFA, "1", {"A1": "A"}))
+    assert state.clash_for(issue("release", STAGE_IFF, "1", {"A1": "0"})) is None
+
+
+def test_taking_the_next_round_keeps_both_issues():
+    state = ChainState()
+    state.add_issue(issue("first", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("second", STAGE_IFA, "2", {"A1": "B"}))
+    added = state.add_issue(issue("third", STAGE_IFA, "2", {"A1": "C"}),
+                            CLASH_NEXT_ROUND)
+    assert added.round_no == "3" and added.code == "IFA-3"
+    assert [e.label for e in state.issues] == ["first", "second", "third"]
+
+
+def test_the_next_round_is_one_past_the_highest_not_the_first_gap():
+    """The rounds are deliveries in the order they went out."""
+    state = ChainState()
+    state.add_issue(issue("first", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("fifth", STAGE_IFA, "5", {"A1": "B"}))
+    assert state.next_round(STAGE_IFA) == "6"
+
+
+def test_overwriting_replaces_the_issue_in_its_own_place():
+    """A replacement for IFA-2 belongs between IFA-1 and IFA-3, not at the end."""
+    state = ChainState()
+    state.add_issue(issue("first", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("wrong", STAGE_IFA, "2", {"A1": "B"}))
+    state.add_issue(issue("third", STAGE_IFA, "3", {"A1": "C"}))
+    state.add_issue(issue("right", STAGE_IFA, "2", {"A1": "B"}), CLASH_OVERWRITE)
+    assert [e.label for e in state.issues] == ["first", "right", "third"]
+    assert [e.code for e in state.issues] == ["IFA-1", "IFA-2", "IFA-3"]
+
+
+def test_overwriting_moves_a_folder_rather_than_tracking_it_twice():
+    """The same folder cannot be two rounds of the same package."""
+    state = ChainState()
+    state.add_issue(issue("first", STAGE_IFA, "1", {"A1": "A"}))
+    state.add_issue(issue("moved", STAGE_IFA, "2", {"A1": "B"}))
+    state.add_issue(issue("moved", STAGE_IFA, "1", {"A1": "B"}), CLASH_OVERWRITE)
+    assert [(e.label, e.code) for e in state.issues] == [("moved", "IFA-1")]
+
+
+def test_an_issue_with_no_round_number_clashes_with_nothing():
+    state = ChainState()
+    state.add_issue(issue("first", STAGE_IFA, "", {"A1": "A"}))
+    assert state.clash_for(issue("second", STAGE_IFA, "", {"A1": "B"})) is None
+
+
+def test_an_overwritten_round_leaves_the_chain_replayable(tmp_path: Path):
+    """The workbook is replayed from the chain, so the swap has to be total."""
+    state = ChainState(project="P")
+    state.add_issue(issue("approval", STAGE_IFA, "1", {"A1": "A", "A2": "A"}))
+    state.add_issue(issue("wrong release", STAGE_IFF, "1", {"A1": "0"}))
+    state.add_issue(issue("right release", STAGE_IFF, "1", {"A1": "0", "A2": "0"}),
+                    CLASH_OVERWRITE)
+
+    chain = build_chain(state)
+    assert [e.label for e in chain.issues] == ["approval", "right release"]
+    assert chain.outstanding == []          # A2 shipped in the issue that replaced it
+    write_tracker(chain, tmp_path / "T.xlsx")
