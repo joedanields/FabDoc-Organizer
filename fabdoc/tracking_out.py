@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -40,6 +41,10 @@ _DROP_FILL = PatternFill("solid", fgColor="D9D9D9")
 _DROP_FONT = Font(bold=True, size=10, color="595959")
 _BAND_FILL = PatternFill("solid", fgColor="C5E0B4")
 _BAND_FONT = Font(bold=True, size=10, color="375623")
+# Red, and used nowhere else on the sheet: a revision that skipped a rung is the
+# one mark on the grid that says the tracker itself is missing something.
+_REV_ERR_FILL = PatternFill("solid", fgColor="FFC7CE")
+_REV_ERR_FONT = Font(bold=True, size=10, color="9C0006")
 
 
 def _title(ws: Worksheet, text: str, width: int) -> None:
@@ -263,10 +268,18 @@ _LEGEND = [
     ("D", "Dropped At Re-Approval", "drop"),
     ("0", "Released For Fabrication", "iff"),
     ("1,2..", "Revised As Noted", "iff"),
+    ("B / 1", "Revision Out Of Order", "rev"),
 ]
 
 _LEGEND_FILLS = {"ifa": _IFA_FILL, "iff": _IFF_FILL, "hold": _HOLD_FILL,
-                 "drop": _DROP_FILL}
+                 "drop": _DROP_FILL, "rev": _REV_ERR_FILL}
+
+# The one legend entry that needs more than two words: it marks a revision that
+# is wrong rather than a state the member is in, so it says what was expected.
+_REV_ERR_NOTE = ("A red revision skipped a rung: approval starts at A and steps "
+                 "one letter per re-approval, fabrication starts at 0 and steps "
+                 "one number per revised-as-noted. Hover the cell for the step "
+                 "that is missing.")
 
 
 def _write_legend(ws: Worksheet, column: int, row: int) -> None:
@@ -283,11 +296,20 @@ def _write_legend(ws: Worksheet, column: int, row: int) -> None:
         key.fill = _LEGEND_FILLS[kind]
         key.border = _BORDER
         key.alignment = _CENTER
-        key.font = {"hold": _HOLD_FONT, "drop": _DROP_FONT}.get(kind, _VALUE_FONT)
+        key.font = {"hold": _HOLD_FONT, "drop": _DROP_FONT,
+                    "rev": _REV_ERR_FONT}.get(kind, _VALUE_FONT)
         text = ws.cell(row=row, column=column + 1, value=meaning)
         text.font = _VALUE_FONT
         text.alignment = _LEFT
         row += 1
+    row += 1
+    note = ws.cell(row=row, column=column, value=_REV_ERR_NOTE)
+    note.font = Font(italic=True, size=9, color="808080")
+    note.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    # Six rows deep: a merged cell does not auto-fit, and the row heights are
+    # shared with the member grid to the left, so the block is sized instead.
+    ws.merge_cells(start_row=row, start_column=column,
+                   end_row=row + 5, end_column=column + 1)
     ws.column_dimensions[get_column_letter(column)].width = 9
     ws.column_dimensions[get_column_letter(column + 1)].width = 26
 
@@ -354,6 +376,7 @@ def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
     """The member rows of one band. Returns the next free row."""
     for member in members:
         per_issue = chain.history.get(member, {})
+        faults = chain.rev_errors.get(member, {})
         info = chain.member_info.get(member, {})
         name = info.get("name") or split_member_id(member)[1]
         zone = info.get("zone", "")
@@ -366,7 +389,14 @@ def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
             cell.alignment = _LEFT if c_idx == 1 else _CENTER
             if c_idx > 2:
                 entry = chain.issues[c_idx - 3]
-                if value:
+                fault = faults.get(entry.label)
+                if value and fault:
+                    # The revision itself is still printed - the reader needs to
+                    # see that it is a B to see that the A never came.
+                    cell.fill = _REV_ERR_FILL
+                    cell.font = _REV_ERR_FONT
+                    cell.comment = Comment(f"{name}: revision {fault}.", "FabDoc")
+                elif value:
                     cell.fill = _IFF_FILL if entry.stage == STAGE_IFF else _IFA_FILL
                 elif entry.stage == STAGE_IFF and member in held:
                     # Say it, do not just colour it: a printed tracker and a
