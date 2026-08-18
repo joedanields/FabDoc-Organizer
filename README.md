@@ -194,6 +194,15 @@ Point the tracker at an **existing file** to add the issue to that chain. That i
 how an IFF release finds the scope its IFA issue approved; a new file would start
 an empty history and report nothing as on hold.
 
+If the stage and round given are already tracked against **another folder** -
+the wrong tracker was picked, or that round is being re-issued - you are asked
+before any PDF is read, because the two want opposite things done to the chain
+the whole workbook is replayed from. Either the new folder is added as the next
+round and both are kept, or it overwrites that issue and takes its place in the
+chain. On the command line, `--on-clash ask|overwrite|next`; an unattended run
+keeps both and says so. Re-processing the *same* folder is not a clash: it
+updates that issue in place, as it always did.
+
 #### Fabrication releases: absent is not removed
 
 The first fabrication release rarely carries the whole package - 50 of 119 is
