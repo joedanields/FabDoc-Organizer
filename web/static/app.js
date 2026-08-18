@@ -11,6 +11,7 @@ const LOCAL = document.body.dataset.local === "yes";
 let session = null;        // set when the package was uploaded
 let localPath = "";        // set when the package was read in place
 let project = "";
+let packageLabel = "";     // the issue folder's own name, as the chain keys it
 let trackerPath = "";
 let lastWritten = { register: "", tracker: "", validation: "", diff: "" };
 
@@ -129,7 +130,8 @@ function toast(message, kind, ms) {
 
 let askResolve = null;
 
-function ask({ title, body = "", value = null, ok = "OK", cancel = "Cancel" }) {
+function ask({ title, body = "", value = null, ok = "OK", cancel = "Cancel",
+               alt = "" }) {
   $("ask-title").textContent = title;
   $("ask-body").textContent = body;
   $("ask-body").hidden = !body;
@@ -139,6 +141,10 @@ function ask({ title, body = "", value = null, ok = "OK", cancel = "Cancel" }) {
   $("ask-ok").textContent = ok;
   $("ask-cancel").hidden = !cancel;
   $("ask-cancel").textContent = cancel || "Cancel";
+  // The third answer resolves to "alt", so a caller can tell it apart from the
+  // plain OK it is offered beside.
+  $("ask-alt").hidden = !alt;
+  $("ask-alt").textContent = alt || "";
   $("ask-backdrop").hidden = false;
   (wantsText ? $("ask-input") : $("ask-ok")).focus();
   if (wantsText) $("ask-input").select();
@@ -154,6 +160,7 @@ function closeAsk(value) {
 $("ask-ok").onclick = () =>
   closeAsk($("ask-input").hidden ? true : $("ask-input").value.trim() || null);
 $("ask-cancel").onclick = () => closeAsk(null);
+$("ask-alt").onclick = () => closeAsk("alt");
 $("ask-input").onkeydown = (e) => { if (e.key === "Enter") $("ask-ok").click(); };
 $("ask-backdrop").onclick = (e) => { if (e.target === $("ask-backdrop")) closeAsk(null); };
 
@@ -405,6 +412,7 @@ function applyScan(data) {
   session = data.session || null;
   localPath = data.local_path || "";
   project = data.meta.project;
+  packageLabel = data.folder || "";
 
   $("m-title").value = data.meta.title;
   $("m-date").value = data.meta.date;
@@ -547,9 +555,18 @@ async function describeTracker() {
     const d = await send("/api/tracker/info", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({
+        path, stage: $("stage").value, round: $("round").value.trim(),
+        label: packageLabel,
+      }),
     });
-    if (d.tracked) {
+    if (d.clash) {
+      // Said here, not at the end of the run: this is the one thing about a
+      // chosen tracker that changes what the engineer should do next.
+      status(el, `${d.clash.code} is already tracked as "${d.clash.label}" ` +
+        `(${d.clash.drawings} drawing(s)). You will be asked whether to ` +
+        `overwrite it or add this as ${$("stage").value}-${d.next_round}.`, "bad");
+    } else if (d.tracked) {
       status(el, `Adding to "${d.project}" - ${d.issues} issue(s) already tracked` +
         (d.last ? `, last: ${d.last}` : "") + ".", "good");
     } else if (d.exists) {
@@ -569,6 +586,7 @@ async function describeTracker() {
 // as the tracker folder was changed.
 $("track-folder").addEventListener("change", describeTracker);
 $("track-name").addEventListener("change", describeTracker);
+$("round").addEventListener("change", describeTracker);
 
 // Answering anything in the destination or tracker boxes moves the stepper on.
 ["out-box", "track-box"].forEach((id) =>
@@ -581,6 +599,7 @@ document.querySelectorAll('input[name="stagepick"]').forEach((r) => {
     $("stage").value = r.value;
     status($("gen-status"), "");
     refreshStep();
+    describeTracker();          // a stage change moves which round is claimed
   };
 });
 
@@ -621,6 +640,42 @@ if (LOCAL) {
     $(f).addEventListener("change", () => checkFolderField($(f), $(s))));
 }
 
+/* The stage and round the engineer typed may already belong to another folder:
+   the wrong tracker was picked, or that round is being re-issued. The two want
+   opposite things done to a chain the whole workbook replays from, so it is
+   asked before a single PDF is read - by then the answer would be about a chain
+   that had already changed. Returns the answer, or null to call the run off. */
+async function askRound(path) {
+  const stage = $("stage").value;
+  const round = $("round").value.trim();
+  if (!stage || !round) return "next";
+  let d;
+  try {
+    d = await send("/api/tracker/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, stage, round, label: packageLabel }),
+    });
+  } catch {
+    return "next";              // the run itself will report a bad tracker path
+  }
+  if (!d.clash) return "next";
+
+  const answer = await ask({
+    title: `${d.clash.code} is already tracked`,
+    body: `This tracker already holds ${d.clash.code} for "${d.clash.label}" ` +
+          `(${d.clash.drawings} drawing(s)), and you are adding ` +
+          `"${packageLabel}". Overwrite replaces that issue with this folder and ` +
+          `keeps its place in the chain. Adding as ${stage}-${d.next_round} ` +
+          `keeps both.`,
+    ok: `Add as ${stage}-${d.next_round}`,
+    alt: `Overwrite ${d.clash.code}`,
+    cancel: "Cancel",
+  });
+  if (answer === null) return null;
+  return answer === "alt" ? "overwrite" : "next";
+}
+
 /* ---------------------------------------------------------- 2. generate */
 
 let genJob = null;
@@ -650,6 +705,18 @@ $("generate").onclick = async () => {
   }
   project = $("m-project").value;
 
+  const trackerTarget = LOCAL && $("track-folder").value.trim()
+    ? join($("track-folder").value.trim(), $("track-name").value.trim())
+    : $("track-name").value.trim();
+  let onClash = "next";
+  if (tracking && trackerTarget) {
+    onClash = await askRound(trackerTarget);
+    if (onClash === null) {
+      status($("gen-status"), "Left alone - nothing was written.");
+      return;
+    }
+  }
+
   const fd = form({
     session: session || "",
     local_path: localPath,
@@ -668,6 +735,7 @@ $("generate").onclick = async () => {
     tracker_folder: LOCAL ? $("track-folder").value : "",
     tracker_name: $("track-name").value,
     save_default_tracker: $("track-default").checked,
+    on_clash: onClash,
   });
 
   busy($("generate"), true);
@@ -762,6 +830,15 @@ function renderGenerate(data) {
 
   if (data.chain) {
     lines.push("");
+    // Say where it landed. Renumbering is the right answer to a clash and also
+    // the quiet one: the workbook would show an issue the engineer did not ask
+    // for, with no line anywhere saying who moved it.
+    if (data.round) {
+      lines.push(data.round.overwritten
+        ? `${data.round.taken} was already tracked - this issue replaced it.`
+        : `${data.round.taken} was already tracked - this issue was added as ` +
+          `${data.round.code} instead.`);
+    }
     lines.push(`Tracker: ${data.chain.project || "(unnamed package)"}`);
     data.chain.issues.forEach((i) => {
       lines.push(`  ${i.n}. ${i.code.padEnd(8)} ${i.label.slice(0, 44).padEnd(46)}` +
@@ -807,6 +884,11 @@ function renderGenerate(data) {
         "rows, or tune the patterns under Settings and run again."
       : "", data.review ? "bad" : "");
 
+  if (data.round) {
+    toast(data.round.overwritten
+      ? `${data.round.taken} was overwritten by this issue.`
+      : `${data.round.taken} was taken - tracked as ${data.round.code}.`, "good");
+  }
   toast(`Register written: ${data.register}`, "good");
   $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
   refreshLastRegister();
