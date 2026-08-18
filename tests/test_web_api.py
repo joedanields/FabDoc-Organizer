@@ -619,6 +619,75 @@ def test_tracker_info_reports_what_a_chosen_file_already_holds(local: TestClient
     assert known["stages"] == ["IFA-1"]
 
 
+def test_a_round_already_tracked_is_reported_before_the_run(local: TestClient,
+                                                           project_folder: Path,
+                                                           single_category_folder: Path,
+                                                           tmp_path: Path):
+    """The page asks about a clash before a single PDF is read.
+
+    Asked afterwards, it would be asking about a chain it had already changed.
+    """
+    tracker = tmp_path / "trackers" / "Zone 1 - Tracker.xlsx"
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder),
+        "categories": ["Structural", "Erection"],
+        "output_folder": str(tmp_path / "out"), "output_name": "R.xlsx",
+        "track": "true", "stage": "IFA", "round_no": "2", "project": "Zone 1",
+        "tracker_folder": str(tracker.parent), "tracker_name": tracker.name,
+    })
+    assert _finish(local, started.json()["job"])["state"] == "done"
+
+    body = {"path": str(tracker), "stage": "IFA", "round": "2"}
+    clash = local.post("/api/tracker/info", json={**body,
+                                                  "label": single_category_folder.name}).json()
+    assert clash["clash"]["code"] == "IFA-2"
+    assert clash["clash"]["label"] == project_folder.name
+    assert clash["next_round"] == "3"
+
+    # The same folder again is a re-run, not a clash.
+    same = local.post("/api/tracker/info", json={**body,
+                                                 "label": project_folder.name}).json()
+    assert "clash" not in same
+    # A free round is not one either.
+    free = local.post("/api/tracker/info",
+                      json={**body, "round": "3",
+                            "label": single_category_folder.name}).json()
+    assert "clash" not in free
+
+
+@pytest.mark.parametrize("answer, labels", [
+    ("next", ["IFA-2", "IFA-3"]),
+    ("overwrite", ["IFA-2"]),
+])
+def test_the_answer_to_a_clash_decides_what_happens_to_the_round(
+        local: TestClient, project_folder: Path, single_category_folder: Path,
+        tmp_path: Path, answer: str, labels: list):
+    """Overwrite replaces the tracked round; anything else keeps both issues."""
+    tracker = tmp_path / "trackers" / "Zone 1 - Tracker.xlsx"
+    common = {
+        "categories": ["Structural", "Erection"],
+        "output_folder": str(tmp_path / "out"),
+        "track": "true", "stage": "IFA", "round_no": "2", "project": "Zone 1",
+        "tracker_folder": str(tracker.parent), "tracker_name": tracker.name,
+    }
+    started = local.post("/api/generate", data={
+        **common, "local_path": str(project_folder), "output_name": "R1.xlsx"})
+    assert _finish(local, started.json()["job"])["state"] == "done"
+
+    started = local.post("/api/generate", data={
+        **common, "local_path": str(single_category_folder),
+        "output_name": "R2.xlsx", "on_clash": answer})
+    done = _finish(local, started.json()["job"])
+    assert done["state"] == "done", done.get("error")
+    payload = done["result"]
+
+    assert [i["code"] for i in payload["chain"]["issues"]] == labels
+    assert payload["round"]["taken"] == "IFA-2"
+    assert payload["round"]["overwritten"] is (answer == "overwrite")
+    # Whichever was chosen, the issue that is there is this folder.
+    assert payload["chain"]["issues"][-1]["label"] == single_category_folder.name
+
+
 def test_parts_and_assemblies_share_one_tracker_workbook(local: TestClient,
                                                          project_folder: Path,
                                                          tmp_path: Path):
