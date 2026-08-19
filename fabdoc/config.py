@@ -93,19 +93,36 @@ class ExtractionProfile:
     # so they are read by column position rather than by a same-line pattern.
     # These are the headings to look under, matched whole and case-insensitively.
     #
-    # Read off single-part drawings only. A part is one piece cut to one length
-    # and that is what its title block states; an assembly's title block carries
-    # a number too, but it is the count of assemblies, not something the shop
-    # cuts to - tracked together they read as one column of numbers that mean
-    # two different things.
-    spec_categories: list[str] = field(
-        default_factory=lambda: ["Part"]
+    # Which drawings do NOT carry a part's numbers. An assembly's title block
+    # states a count too, but it counts assemblies rather than anything cut, and
+    # read into the same column the two mean different things.
+    #
+    # Named as an exclusion rather than "read these categories" on purpose. The
+    # part specs screen is routinely pointed straight at a folder of part
+    # drawings - two revisions of the same set, pulled out to be compared - and
+    # that folder is a category called "OLD", or "NEW", or nothing at all. A
+    # list of category names to read refuses exactly the case the screen is for;
+    # a list of what to skip lets anything unrecognised be what it plainly is.
+    non_spec_categories: list[str] = field(
+        default_factory=lambda: ["Assembly", "Erection", "Structural"]
     )
     quantity_labels: list[str] = field(
         default_factory=lambda: ["Qty", "Qty.", "Quantity", "No. Off", "No Off"]
     )
     length_labels: list[str] = field(
         default_factory=lambda: ["Length", "Cut Length", "Len"]
+    )
+    # The rest of the same row. Profile and material are what the piece is cut
+    # from, weight is what it comes to - read together they are the part's
+    # whole specification, and the second tracker compares all five.
+    profile_labels: list[str] = field(
+        default_factory=lambda: ["Profile", "Section", "Shape", "Size"]
+    )
+    material_labels: list[str] = field(
+        default_factory=lambda: ["Material", "Grade", "Mat", "Mat."]
+    )
+    weight_labels: list[str] = field(
+        default_factory=lambda: ["Weight", "Wt", "Wt.", "Mass"]
     )
 
     # Templates that write them inline ("QTY: 3") instead of as a table. Tried

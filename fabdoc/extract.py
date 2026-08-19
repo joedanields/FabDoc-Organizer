@@ -54,6 +54,11 @@ class DrawingRecord:
     quantity: str = ""
     length: str = ""
     length_inches: float | None = None
+    # The rest of that row: what the piece is cut from, and what it comes to.
+    profile: str = ""
+    material: str = ""
+    weight: str = ""
+    weight_value: float | None = None
 
     # Derived from the member mark: "17172C172" -> job 17, sequence 172, zone 1.
     job_no: str = ""
@@ -67,6 +72,9 @@ class DrawingRecord:
     revision_source: str = SOURCE_NONE
     quantity_source: str = SOURCE_NONE
     length_source: str = SOURCE_NONE
+    profile_source: str = SOURCE_NONE
+    material_source: str = SOURCE_NONE
+    weight_source: str = SOURCE_NONE
 
     page_count: int = 0
     notes: list[str] = field(default_factory=list)
@@ -211,19 +219,64 @@ _FEET_INCHES = re.compile(
 _INCHES_ONLY = re.compile(r"^(\d+(?:\.\d+)?)?(?:\s*(\d+)\s*/\s*(\d+))?\s*\"?$")
 
 _QTY_SHAPE = re.compile(r"^\d{1,5}$")
+# "177.41 lbs", "1.66 lbs", "80.5 kg", "14.72", and "1085.70***" - the marker a
+# detailing package puts on an estimated weight, which is still a weight.
+_WEIGHT_SHAPE = re.compile(
+    r"^(\d+(?:\.\d+)?)\s*(?:lbs?|kgs?|pounds?)?\s*[*~+]*$", re.IGNORECASE)
 
 
-def _reads_spec(category: str, profile: ExtractionProfile) -> bool:
-    """Is this a category whose drawings state a quantity and a cut length?
+def parse_weight(text: str) -> float | None:
+    """The number out of a weight cell, or None when it is not one.
 
-    Single-part drawings, and by default only those: a part is one piece cut to
-    one length, which is exactly what the shop works to. An assembly title
-    block carries a number as well, but it counts assemblies rather than
-    anything cut, and the two side by side read as one column meaning two
-    things. An empty list switches the restriction off.
+    The unit stays on the string as the sheet writes it and is dropped here:
+    two issues of the same drawing state the same unit, and what is being asked
+    is whether the number moved.
     """
-    wanted = {c.strip().lower() for c in profile.spec_categories if c.strip()}
-    return not wanted or (category or "").strip().lower() in wanted
+    match = _WEIGHT_SHAPE.match((text or "").strip())
+    return float(match.group(1)) if match else None
+
+
+def _is_weight(value: str) -> bool:
+    return parse_weight(value) is not None
+
+
+def _spec_headings(profile: ExtractionProfile) -> set[str]:
+    """Every heading in the title block table, lower-cased.
+
+    A value is read as the cell under a heading, so a heading drawn under
+    another heading must not be taken for one - that is the whole of how a
+    column with an empty cell would otherwise borrow the row below it.
+    """
+    return {(label or "").strip().lower().rstrip(".")
+            for labels in (profile.quantity_labels, profile.length_labels,
+                           profile.profile_labels, profile.material_labels,
+                           profile.weight_labels)
+            for label in labels if label.strip()}
+
+
+def _is_spec_text(value: str, headings: set[str]) -> bool:
+    """Could this be a profile or a material?
+
+    Neither has a shape worth testing - "L3X3X3/16", "PIPE1-1/4SCH40", "A36"
+    and "A500-GR.C" have nothing in common - so the column position does the
+    work and this only rejects what is obviously not a value.
+    """
+    text = (value or "").strip()
+    return bool(text) and text.lower().rstrip(".") not in headings
+
+
+def reads_spec(category: str, profile: ExtractionProfile) -> bool:
+    """Does a drawing in this category state a part's five values?
+
+    A part is one piece cut to one length from one profile in one material at
+    one weight, and its title block says so. An assembly's says something else
+    under the same headings, so assemblies are skipped by name - see
+    ExtractionProfile.non_spec_categories, which is a list of what to skip
+    rather than what to read, so a folder of part drawings under any name at
+    all is still read as what it plainly is.
+    """
+    skip = {c.strip().lower() for c in profile.non_spec_categories if c.strip()}
+    return (category or "").strip().lower() not in skip
 
 
 def parse_length_inches(text: str) -> float | None:
@@ -482,44 +535,50 @@ def extract_drawing(
                         setattr(record, attr, clean)
                         setattr(record, src_attr, source)
 
-                # How many, and how long. Single-part drawings only - see
-                # ExtractionProfile.spec_categories. The title block writes
-                # these as a table, so the cell under the heading is read first
-                # and the inline patterns are only the fallback.
+                # The five values a part's title block states, off anything
+                # that is not an assembly - see reads_spec. They are written as
+                # a table, so the cell under each heading is read first and the
+                # inline patterns are only the fallback.
                 # The band is the full width of the sheet at the title block's
                 # height: the Qty column sits left of the block's own left
                 # edge on a landscape sheet, outside the clip everything else
                 # is read from.
                 band = fitz.Rect(page.rect.x0, clip.y0, page.rect.x1, page.rect.y1)
-                spans = _spans_in(page, band) if _reads_spec(category, prof) else []
+                spans = _spans_in(page, band) if reads_spec(category, prof) else []
 
-                qty = _cell_under(spans, prof.quantity_labels,
-                                  lambda v: bool(_QTY_SHAPE.match(v.strip())))
-                if qty:
-                    record.quantity = qty.strip()
-                    record.quantity_source = SOURCE_TITLEBLOCK
-                elif _reads_spec(category, prof):
-                    for text, source in ((block_text, SOURCE_TITLEBLOCK),
-                                         (page_text, SOURCE_PAGE)):
-                        found = _first_match(text, _compile(prof.quantity_patterns))
-                        if found:
-                            record.quantity = found.strip()
-                            record.quantity_source = source
-                            break
+                headings = _spec_headings(prof)
+                text_value = lambda v: _is_spec_text(v, headings)   # noqa: E731
+                for labels, attr, src_attr, accept in (
+                    (prof.quantity_labels, "quantity", "quantity_source",
+                     lambda v: bool(_QTY_SHAPE.match(v.strip()))),
+                    (prof.length_labels, "length", "length_source", _is_length),
+                    (prof.profile_labels, "profile", "profile_source", text_value),
+                    (prof.material_labels, "material", "material_source", text_value),
+                    (prof.weight_labels, "weight", "weight_source", _is_weight),
+                ):
+                    found = _cell_under(spans, labels, accept)
+                    if found:
+                        setattr(record, attr, found.strip())
+                        setattr(record, src_attr, SOURCE_TITLEBLOCK)
 
-                length = _cell_under(spans, prof.length_labels, _is_length)
-                if length:
-                    record.length = length.strip()
-                    record.length_source = SOURCE_TITLEBLOCK
-                elif _reads_spec(category, prof):
-                    for text, source in ((block_text, SOURCE_TITLEBLOCK),
-                                         (page_text, SOURCE_PAGE)):
-                        found = _first_match(text, _compile(prof.length_patterns),
-                                             _is_length)
-                        if found:
-                            record.length = found.strip()
-                            record.length_source = source
-                            break
+                # Templates that write them inline ("QTY: 3") instead of as a
+                # table. Only the two that have patterns: a profile or a
+                # material found by a same-line pattern would as likely be the
+                # cell beside it, and a wrong one is worse than none.
+                if reads_spec(category, prof):
+                    for patterns, attr, src_attr, accept in (
+                        (prof.quantity_patterns, "quantity", "quantity_source", None),
+                        (prof.length_patterns, "length", "length_source", _is_length),
+                    ):
+                        if getattr(record, attr):
+                            continue
+                        for text, source in ((block_text, SOURCE_TITLEBLOCK),
+                                             (page_text, SOURCE_PAGE)):
+                            found = _first_match(text, _compile(patterns), accept)
+                            if found:
+                                setattr(record, attr, found.strip())
+                                setattr(record, src_attr, source)
+                                break
 
                 # Tier 3: unlabelled mark, largest text in the title block.
                 if not record.member_name and prof.use_largest_text_fallback:
@@ -570,6 +629,7 @@ def extract_drawing(
             break
 
     record.length_inches = parse_length_inches(record.length)
+    record.weight_value = parse_weight(record.weight)
 
     record.job_no, record.seq_group, record.zone = parse_member_mark(
         record.member_name, prof

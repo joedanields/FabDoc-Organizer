@@ -369,13 +369,9 @@ python -m fabdoc generate "<folder>" --track --stage IFA --round 2 --on-clash ov
 | --- | --- |
 | **Tracker** | One row per issue: stage, round, date, added / revised / removed / released / on hold |
 | **Member History** | Member down the side, issue across the top, revision in the cell |
-| **Qty** | How many of each part to make, issue by issue, and what moved |
-| **Length** | How long to cut each part, issue by issue, and what moved |
 | **Change Log** | Every change, flattened, issue by issue |
 | **On Hold** | Approved members not yet released, and why |
 
-**Qty** and **Length** appear only when the drawings carry that number — an
-approval title block usually carries neither.
 
 ### The mark is spelled the way the file spells it
 
@@ -394,58 +390,77 @@ Member History is the one to read in a progress meeting:
 17271X10  zone 2   -  -  -  A  A  |  -  -  -  -     entered late, still not shipped
 ```
 
-### Quantity and cut length
+### The other tracker: part specs, OLD vs NEW
 
-A fabrication drawing states the two numbers the shop actually works to: how
-many of this piece to make, and how long to cut it. They sit in the title block
-as a table — the heading in one row, the value in the row beneath it:
+There are two trackers, and they answer different questions.
+
+The **package tracker** above follows a package across every issue it ever has —
+revisions, what is approved, what has shipped, what is on hold. That is a chain,
+and it needs one.
+
+The **part spec tracker** does not. A detailer sends a revised set and one
+question is asked of it: against the set before it, what moved? So it takes
+exactly two folders, reads the **single part drawings** of each, and compares
+the five values the shop actually works to:
 
 ```
 Qty   Profile      Material   Length        Weight
-3     L3X3X3/16    A36        3'-11 5/8"    14.72 lbs
+2     L3X3X3/16    A36        3'-11 5/8"    14.72 lbs
 ```
 
-They are read off the **Single Part Drawings** folder only. A part is one piece
-cut to one length, and that is what its title block states; an assembly's title
-block carries a number too, but it counts assemblies rather than anything cut,
-and the two in one column read as one number meaning two different things.
-(`spec_categories` in the profile, if your part folder is named differently.)
+It keeps no history, writes no chain file, and nothing has to be kept in step.
+**Part Specs** in the header is a page of its own, not a panel over the register
+screen — it shares nothing with a register run, so it is somewhere you go and
+come back from. Give it the two folders and it writes one workbook: a Summary,
+then a sheet per value.
 
-The value is found by column position rather than by a same-line label — read as
-flowing text those two rows interleave, so "Qty" is followed by "Profile" and no
-pattern can reach the number. Both appear as extra columns in the register (only
-when the drawings carry them), and each is tracked issue by issue on **its own
-sheet** — they are read for different reasons, and a cell holding
-`3 @ 3'-11 5/8"` cannot be sorted, filtered or totalled as either.
+| Member Name | Zone | Sequence | OLD | NEW | Change |
+| --- | --- | --- | --- | --- | --- |
+| 17hsp134 | - | TYPE HSP | 0'-8 5/16" | 0'-10 1/8" | Increased |
+| 17hsp135 | - | TYPE HSP | 2'-4 1/8" | 2'-7 11/16" | Increased |
 
-**Length**
+**Only the parts whose value moved.** Every part in both issues is compared, but
+a sheet is a report of what changed, not a list of everything that did not: six
+hundred rows saying "No change" is a haystack with the answer somewhere in it.
+A value that moved nowhere gets no table at all, just a line saying **NO
+CHANGES** and how many parts carry the same one in both issues.
 
-| Member Name | Zone | Sequence | IFF-1 | IFF-2 | Changed | What Changed |
-| --- | --- | --- | --- | --- | --- | --- |
-| 17hsp133 | - | TYPE HSP | 0'-9 1/8" | | No change | |
-| 17hsp134 | - | TYPE HSP | 0'-8 5/16" | **0'-10 1/8"** | **Length** | 0'-8 5/16" to 0'-10 1/8" (+0'-1 13/16") at IFF-2 |
+One word in the Change column, because that is the whole question: **Increased**,
+**Decreased**, or **Changed** (a profile or a material does not go up or down).
+The two values sit beside it, so nothing needs to restate them.
 
-**Qty** is the same sheet with the count in the cell, written as a number so the
-column sorts and totals.
+The Summary in front says how many of each moved per value, and lists the parts
+that are in only one of the two issues — once, there, rather than five times
+over on the sheets: a part missing from the new issue is missing from its
+quantity, its profile, its material, its length and its weight alike, and it is
+not a change to any of them.
 
-The cell that moved is amber so the eye lands on the issue that moved it, and
-the last two columns say what happened in words, on the same row — nothing on
-these sheets has to be hovered to be read. The difference is given in feet and
-inches, the units the shop cuts to. A part that never moved says **No change**
-outright, which is most of them: on a re-issue of 119 drawings nobody reads 119
-title blocks to find the three that moved.
+Point it either at a whole issue folder or straight at a folder of part
+drawings — two revisions of the same set, pulled out to be compared. Both work:
+everything that is not an assembly or an erection drawing is read as a part.
 
-A part with no value for that number gets no row on its sheet, and an issue that
-stated none gets no column — an empty column invites the reading that the parts were dropped that
-round.
+**Name the folders OLD and NEW.** Which folder is which comes from the folder
+names, not from the order you choose them in:
 
-The same changes appear in the Change Log as **Qty changed** and **Length
-changed** rows, so one filter answers "what actually changed in this issue" — a
-revision letter says a drawing changed without saying what changed in it.
+```
+26. 2026-08-07 Zone 1 Stair Tower OLD
+31. 2026-08-10 Zone 1 Stair Tower NEW
+```
 
-A member is compared against the last issue that carried a value, not the issue
-immediately before, so one absent from a release and back in the next has not
-changed twice.
+Read backwards, every increase in the report would be printed as a decrease —
+a silent, total inversion of the one thing it is for. So a folder that says
+neither is refused by name before a single PDF is read, and so are two folders
+that both say OLD.
+
+A part in only one of the two issues is reported as **Only in OLD** or **Only in
+NEW**, never as removed. A revised set is usually a partial re-issue — eight
+drawings answering a comment — and the 289 it did not carry were not deleted.
+
+On the command line:
+
+```bash
+python -m fabdoc specs "26. Zone 1 Stair Tower OLD" "31. Zone 1 Stair Tower NEW"
+```
 
 ### Fabrication releases: absent is not removed
 
@@ -589,6 +604,10 @@ detailed for fabrication, so no part is in an approval round — and a column of
 blanks across every part reads as a package that dropped them all at that issue.
 An issue still keeps its column when it is the one that dropped a member (the
 `D`) or a release that left one behind (the `H`).
+
+Quantities, profiles, materials, cut lengths and weights are **not** on this
+tracker. They belong to the part spec tracker below, which compares two issues
+rather than chaining every one of them.
 
 **A red revision skipped a rung.** Approval runs on letters and fabrication on
 numbers, and each ladder is climbed one rung at a time: a drawing's first

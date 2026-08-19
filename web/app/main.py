@@ -46,6 +46,9 @@ from fabdoc.folder_meta import parse_folder
 from fabdoc.memberlist import (preview_columns, read_member_list, sheet_names)
 from fabdoc.register import Register, build_register
 from fabdoc.register_io import read_register
+from fabdoc.spec_compare import (CHANGED, DECREASED, FIELDS, INCREASED,
+                                 UNCHANGED, compare_specs, order_folders)
+from fabdoc.spec_out import write_spec_report
 from fabdoc.tracking import (STAGE_IFF, STAGES, IssueEntry, apply_reasons,
                              CLASH_NEXT_ROUND, CLASH_OVERWRITE, build_chain,
                              load_state, project_name_from, save_state,
@@ -454,19 +457,11 @@ def _chain_payload(chain, tracker: Path) -> dict:
             "on_hold": len(step.on_hold) if step else 0,
             "verdict": step.verdict if step else "first issue",
         })
-    # What the shop was told to make, and where it moved. A revision letter
-    # says a drawing changed; this says whether the numbers behind it did.
-    spec = [
-        {"member": c.member_name, "category": c.category, "field": c.field,
-         "old": c.old, "new": c.new, "delta": c.delta, "issue": c.label}
-        for c in chain.spec_changes
-    ]
     return {
         "project": chain.project,
         "baseline": chain.baseline_label,
         "issues": issues,
         "outstanding": len(chain.outstanding),
-        "spec_changes": spec,
         "tracker": tracker.name,
         "tracker_path": str(tracker),
         # The tracker can live somewhere the register does not - a job folder
@@ -778,6 +773,20 @@ async def api_tracker_info(request: Request):
                 "date": held.date_text,
             }
     return info
+
+
+@app.get("/specs", response_class=HTMLResponse)
+async def specs_page(request: Request):
+    """The part spec tracker, on a page of its own.
+
+    Not a panel over the register screen: it shares nothing with a register run
+    - no uploaded package, no chain, no stage and round - and a screen with none
+    of that on it should not be reached through the screen that has all of it.
+    """
+    return templates.TemplateResponse(
+        request, "specs.html",
+        {"app_name": __app_name__, "version": __version__,
+         "local": disk.is_local_client(_client(request)), "page": "specs"})
 
 
 @app.get("/api/trackers")
@@ -1104,6 +1113,91 @@ async def api_diff(
             }
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    return {"job": jobs.start(work).id}
+
+
+@app.post("/api/specs")
+async def api_specs(
+    request: Request,
+    first: str = Form(""),
+    second: str = Form(""),
+    output_folder: str = Form(""),
+    output_name: str = Form(""),
+):
+    """Compare the five title-block values of two issues, OLD against NEW.
+
+    Both sides are folders of drawings read in place, so this is local-only and
+    runs as a job with a progress bar - two issues is a few thousand PDFs.
+    """
+    _require_local(request)
+    host = _client(request)
+    ws.ensure_roots()
+
+    # Which folder is which comes from their names, not from the boxes: read
+    # backwards, every increase in the report is printed as a decrease.
+    try:
+        old_folder, new_folder = order_folders(first.strip().strip('"'),
+                                               second.strip().strip('"'))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    for folder in (old_folder, new_folder):
+        if not folder.is_dir():
+            raise HTTPException(400, f"There is no folder at {folder}.")
+
+    settings = load_settings()
+    try:
+        out = disk.resolve_target(output_folder, output_name, ws.OUTPUT_ROOT,
+                                  "Part Specs (OLD vs NEW).xlsx", host)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    def work(job: jobs.Job) -> dict:
+        def load(folder: Path) -> Register:
+            return build_register(
+                folder, settings=settings,
+                progress=lambda d, t, label: job.progress(
+                    d, t, f"{folder.name[:28]}: {label}"),
+                should_cancel=job.cancelled,
+            )
+
+        result = compare_specs(load(old_folder), load(new_folder), settings,
+                               old_label=old_folder.name, new_label=new_folder.name)
+        if job.cancelled():
+            return {}
+        if not result.parts:
+            raise ValueError("No single part drawings found in either folder.")
+
+        job.progress(job.total, job.total, "Writing the report...")
+        write_spec_report(result, out)
+        disk.remember(out)
+
+        return {
+            "report": out.name,
+            "report_path": str(out),
+            "sandboxed": out.parent.resolve() == ws.OUTPUT_ROOT.resolve(),
+            "old_label": result.old_label, "new_label": result.new_label,
+            "old_total": result.old_total, "new_total": result.new_total,
+            "parts": result.parts,
+            "moved": result.moved,
+            "identical": result.is_identical,
+            # Once, not on every field: a part in one issue and not the other
+            # is the same fact about all five values.
+            "only_in_old": len(result.only_in_old),
+            "only_in_new": len(result.only_in_new),
+            "fields": [
+                {"name": spec.name,
+                 "verdict": result.sheets[spec.name].verdict,
+                 "counts": {v: result.sheets[spec.name].count(v)
+                            for v in (INCREASED, DECREASED, CHANGED, UNCHANGED)},
+                 # Only what moved, the same as the workbook. Capped, so a
+                 # wholesale re-detail cannot post ten thousand rows at a page.
+                 "rows": [{"member": r.member_name, "old": r.old, "new": r.new,
+                           "change": r.verdict}
+                          for r in result.sheets[spec.name].changes][:500]}
+                for spec in FIELDS
+            ],
+        }
 
     return {"job": jobs.start(work).id}
 

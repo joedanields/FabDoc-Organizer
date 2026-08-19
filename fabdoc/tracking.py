@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import AppSettings
-from .extract import band_for_mark, parse_length_inches
+from .extract import band_for_mark
 from .register import Register
 from .validate import normalise
 
@@ -51,10 +51,6 @@ STAGES = (STAGE_IFA, STAGE_IFF)
 CLASH_OVERWRITE = "overwrite"    # this folder takes the round, the old one goes
 CLASH_NEXT_ROUND = "next"        # this folder becomes the next round instead
 
-# The two numbers a fabrication drawing tells the shop, tracked alongside the
-# revision because a revision letter says a drawing changed without saying what.
-FIELD_QTY = "Qty"
-FIELD_LENGTH = "Length" 
 
 # "Stairs at Zone 1 and Zone 2 for Re Approval" -> "Stairs at Zone 1 and Zone 2".
 _PURPOSE_CLAUSE = re.compile(
@@ -137,10 +133,6 @@ def snapshot_register(register: Register,
             "rev": rec.revision,
             "zone": rec.zone,
             "category": rec.category,
-            # As the sheet draws it. Kept even when blank, so a member that
-            # stops carrying a length reads as a change rather than as silence.
-            "qty": rec.quantity,
-            "length": rec.length,
         }
     return out
 
@@ -303,16 +295,6 @@ class PackageChain:
     # member: absence from a fabrication release is a hold, not a removal. A
     # member that comes back in a later issue is removed from this map.
     dropped_at: dict = field(default_factory=dict)
-    # comparison key -> {issue label: the quantity / the cut length there}.
-    # Beside the revision history rather than inside it: they answer a different
-    # question, and a member can be reissued at a new revision with the same
-    # numbers or keep its revision while the numbers move.
-    qty_history: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
-    length_history: "OrderedDict[str, dict[str, str]]" = field(default_factory=OrderedDict)
-    # Every quantity or length that moved, in issue order.
-    spec_changes: list = field(default_factory=list)
-    # comparison key -> {issue label: [SpecChange, ...]}, for the grid.
-    spec_by_cell: dict = field(default_factory=dict)
     # comparison key -> {issue label: what is wrong with the revision there}.
     # A revision ladder that skips a rung is a detailing slip, not a state the
     # package is in, so it is kept apart from the counts above.
@@ -530,15 +512,11 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
         for key, ident in current.items():
             info = entry.members.get(ident, {})
             chain.history.setdefault(key, {})[entry.label] = info.get("rev", "")
-            chain.qty_history.setdefault(key, {})[entry.label] = info.get("qty", "")
-            chain.length_history.setdefault(key, {})[entry.label] = info.get("length", "")
             # The latest issue is the current spelling of the mark.
             name = info.get("name") or split_member_id(ident)[1]
             kind, band = band_for_mark(name, cfg.profile)
             chain.band_by_ident[ident] = (kind, band)
             chain.member_info[key] = {
-                "qty": info.get("qty", ""),
-                "length": info.get("length", ""),
                 "name": name,
                 "zone": info.get("zone", "") or chain.member_info.get(key, {}).get("zone", ""),
                 "category": info.get("category", ""),
@@ -623,10 +601,6 @@ def build_chain(state: ChainState, settings: AppSettings | None = None) -> Packa
         previous = entry
 
     chain.rev_errors = revision_faults(chain)
-    chain.spec_changes = spec_changes(chain)
-    for change in chain.spec_changes:
-        chain.spec_by_cell.setdefault(change.member_key, {}).setdefault(
-            change.label, []).append(change)
     return chain
 
 
@@ -722,99 +696,6 @@ def revision_faults(chain: "PackageChain") -> "OrderedDict[str, dict[str, str]]"
             last[ladder] = pos
 
     return faults
-
-
-# ---------------------------------------------------------------------------
-# Quantity and cut length
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SpecChange:
-    """A change to what the shop is told to make, between two issues."""
-
-    member_key: str = ""            # comparison key, as the history is keyed
-    ident: str = ""                 # "Part::17a25"
-    member_name: str = ""
-    category: str = ""
-    field: str = FIELD_QTY          # "Qty" or "Length"
-    label: str = ""                 # the issue that changed it
-    since: str = ""                 # the issue it was last drawn differently in
-    old: str = ""
-    new: str = ""
-    delta: str = ""                 # length only: "+2 1/8" as the shop reads it
-
-    @property
-    def summary(self) -> str:
-        text = f"{self.field} {self.old or '-'} to {self.new or '-'}"
-        return f"{text} ({self.delta})" if self.delta else text
-
-
-def format_inches(value: float, signed: bool = False) -> str:
-    """Inches back to the way the shop reads a length: 47.625 -> 3'-11 5/8".
-
-    ``signed`` for a difference rather than a length: a part that grew reads
-    "+0'-1 13/16"" and one that shrank "-0'-2 1/8"", which is the answer to how
-    much, in the units the shop cuts to.
-    """
-    sign = "-" if value < 0 else ("+" if signed else "")
-    total = abs(value)
-    sixteenths = round(total * 16)
-    whole, rem = divmod(sixteenths, 16)
-    feet, inches = divmod(int(whole), 12)
-    text = f"{feet}'-{inches}"
-    if rem:
-        num, den = rem, 16
-        while num % 2 == 0 and den % 2 == 0:
-            num //= 2
-            den //= 2
-        text += f" {num}/{den}"
-    return f'{sign}{text}"'
-
-
-def spec_changes(chain: "PackageChain") -> list[SpecChange]:
-    """Every change of quantity or cut length, in issue order.
-
-    A revision letter says a drawing changed; it does not say what changed. The
-    two numbers the shop actually works to - how many to make and how long to
-    cut them - are the ones that turn into wasted steel when they move without
-    anybody noticing, and on a re-issue of 119 drawings nobody reads 119 title
-    blocks to find the four that moved.
-
-    Compared against the last issue that carried a value, not the issue
-    immediately before: a member absent from one release and back in the next
-    has not changed twice.
-    """
-    out: list[SpecChange] = []
-    labels = [e.label for e in chain.issues]
-
-    for key in chain.history:
-        info = chain.member_info.get(key, {})
-        for field_name, per_issue in ((FIELD_QTY, chain.qty_history.get(key, {})),
-                                      (FIELD_LENGTH, chain.length_history.get(key, {}))):
-            last_value, last_label = "", ""
-            for label in labels:
-                value = (per_issue.get(label) or "").strip()
-                if not value:
-                    continue
-                if last_value and value != last_value:
-                    delta = ""
-                    if field_name == FIELD_LENGTH:
-                        before = parse_length_inches(last_value)
-                        after = parse_length_inches(value)
-                        if before is not None and after is not None:
-                            delta = format_inches(after - before, signed=True)
-                    out.append(SpecChange(
-                        member_key=key,
-                        ident=member_id(info.get("category", ""),
-                                        info.get("name", "")),
-                        member_name=info.get("name", ""),
-                        category=info.get("category", ""),
-                        field=field_name, label=label, since=last_label,
-                        old=last_value, new=value, delta=delta,
-                    ))
-                last_value, last_label = value, label
-    return out
 
 
 def apply_reasons(state: ChainState, reasons: dict[str, str],

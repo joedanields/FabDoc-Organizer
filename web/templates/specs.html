@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Part Specs &mdash; {{ app_name }}</title>
+<link rel="icon" href="{{ base }}/static/img/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="{{ base }}/static/img/favicon.png">
+<link rel="apple-touch-icon" href="{{ base }}/static/img/apple-touch-icon.png">
+<link rel="stylesheet" href="{{ base }}/static/style.css?v={{ version }}">
+</head>
+<body data-local="{{ 'yes' if local else 'no' }}">
+
+{% include "_header.html" %}
+
+<div class="masthead">
+  <div class="wrap">
+    <h1>Part Specs</h1>
+    <p>Two issues, OLD and NEW: what moved in quantity, profile, material, cut
+       length and weight.</p>
+    <span class="version">v{{ version }}</span>
+  </div>
+</div>
+
+{% include "_specs_panel.html" %}
+
+{% include "_dialogs.html" %}
+
+<script src="{{ base }}/static/common.js?v={{ version }}"></script>
+<script src="{{ base }}/static/specs.js?v={{ version }}"></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<section class="panel active" id="panel-specs">
+  <fieldset>
+    <legend>Two issues, OLD and NEW</legend>
+    <p class="hint">What the shop is told to make - quantity, profile, material,
+       cut length and weight - read off the <strong>single part drawings</strong>
+       of two issues and compared part by part. One sheet per value, and one word
+       against each part: increased, decreased, changed, or no change.</p>
+    <p class="hint">This is not a chain and keeps no history: two folders in, one
+       report out. <strong>Name the folders so one contains OLD and the other
+       NEW</strong> &mdash; that is what decides which way round they are read,
+       not the order they are chosen in. Reading them backwards would turn every
+       increase into a decrease.</p>
+
+    <div class="side">
+      <strong>First folder</strong>
+      <div class="pathrow local-only">
+        <input type="text" id="s-first" aria-label="First issue folder"
+               placeholder="Issue folder with OLD or NEW in its name">
+        <button class="browse" data-target="s-first" data-kind="folder">Browse&hellip;</button>
+      </div>
+    </div>
+
+    <div class="side">
+      <strong>Second folder</strong>
+      <div class="pathrow local-only">
+        <input type="text" id="s-second" aria-label="Second issue folder"
+               placeholder="The other issue folder">
+        <button class="browse" data-target="s-second" data-kind="folder">Browse&hellip;</button>
+      </div>
+    </div>
+    <p class="hint remote-alt-note">Both folders are read from this machine's
+       disk, so this screen is only available when the app is running on the
+       machine that holds the drawings.</p>
+  </fieldset>
+
+  <fieldset class="local-only">
+    <legend>Report</legend>
+    <div class="pathrow">
+      <input type="text" id="s-out-folder" aria-label="Report folder"
+             placeholder="Folder for the comparison report">
+      <button class="browse" data-target="s-out-folder" data-kind="folder">Browse&hellip;</button>
+    </div>
+    <label class="grow block">File name <input type="text" id="s-out-name"
+      value="Part Specs (OLD vs NEW).xlsx"></label>
+  </fieldset>
+
+  <div class="actions">
+    <button id="specs" class="primary">Compare part specs</button>
+    <button id="s-cancel" disabled>Cancel</button>
+    <button id="s-open" class="local-only" disabled>Open report</button>
+    <progress id="s-progress" value="0" max="100" hidden aria-label="Comparing"></progress>
+  </div>
+  <div id="s-status" class="status" role="status" aria-live="polite"></div>
+  <div id="s-result"></div>
+</section>
+

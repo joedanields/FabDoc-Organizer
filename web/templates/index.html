@@ -11,27 +11,7 @@
 </head>
 <body data-local="{{ 'yes' if local else 'no' }}">
 
-<header>
-  <div class="wrap">
-    <img class="brand" src="/static/img/struzon-logo.png"
-         alt="Struzon Technologies Pvt. Ltd &mdash; Stands For Trust">
-
-    <!-- Generating a register is the whole job; the other screens are
-         occasional, so they sit here as icons instead of taking a tab strip
-         that made the main task look like one option out of five. A finished
-         run ends at the files it wrote - nothing is offered after it. -->
-    <nav class="tools" aria-label="Other screens">
-      <button class="tool" data-sheet="trackers" title="Package trackers">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-        <span>Trackers</span>
-      </button>
-      <button class="tool" data-sheet="settings" title="Extraction settings">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.6 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 11.5 4a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9 2 2 0 1 1 0 4 1.7 1.7 0 0 0-1 .1z"/></svg>
-        <span>Settings</span>
-      </button>
-    </nav>
-  </div>
-</header>
+{% include "_header.html" %}
 
 <div class="masthead">
   <div class="wrap">
@@ -450,25 +430,6 @@
 </div>
 
 <!-- --------------------------------------------------- folder picker -->
-<div class="backdrop" id="pick-backdrop" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pick-title">
-    <h2 id="pick-title">Choose a folder</h2>
-    <div class="batch">
-      <input type="text" id="pick-path" aria-label="Path" placeholder="Type or paste a path">
-      <button id="pick-go">Go</button>
-      <button id="pick-up" title="Parent folder (Backspace)">Up</button>
-      <button id="pick-new">New folder</button>
-    </div>
-    <div id="pick-drives" class="drives"></div>
-    <ul id="pick-list" class="list picker"></ul>
-    <div class="modal-actions">
-      <span id="pick-status" class="status" role="status" aria-live="polite"></span>
-      <button id="pick-cancel">Cancel</button>
-      <button id="pick-ok" class="primary">Use this folder</button>
-    </div>
-  </div>
-</div>
-
 <!-- ------------------------------------------------ ask (confirm / prompt) -->
 <!-- The browser's own alert(), confirm() and prompt() freeze the page, land
      outside the window on a second monitor, and look nothing like the app.
@@ -489,8 +450,9 @@
   </div>
 </div>
 
-<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+{% include "_dialogs.html" %}
 
+<script src="/static/common.js?v={{ version }}"></script>
 <script src="/static/app.js?v={{ version }}"></script>
 </body>
 </html>

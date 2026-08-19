@@ -22,6 +22,8 @@ from .folder_meta import parse_folder
 from .memberlist import read_member_list
 from .register import build_register
 from .register_io import read_register
+from .spec_compare import compare_specs, order_folders
+from .spec_out import suggest_spec_name, write_spec_report
 from .tracking import (STAGE_IFF, STAGES, ChainState, IssueEntry, apply_reasons,
                        CLASH_NEXT_ROUND, CLASH_OVERWRITE, build_chain,
                        load_state, project_name_from, save_state,
@@ -114,25 +116,6 @@ def _print_tracker(chain) -> None:
         print(f"{idx:<3}{entry.code:<9}{entry.label[:40]:<42}{entry.total:>9}   {status}")
 
 
-def _report_spec(chain) -> None:
-    """What the shop was told to make, where it moved.
-
-    A revision letter says a drawing changed; it does not say what changed in
-    it. Nobody opens 119 title blocks to find the four that moved.
-    """
-    changes = chain.spec_changes
-    if not changes:
-        return
-    print()
-    print(f"{len(changes)} quantity/length change(s) across the chain:")
-    for change in changes[:20]:
-        delta = f"   ({change.delta})" if change.delta else ""
-        print(f"  {change.member_name:<14} {change.field:<7} "
-              f"{change.old:>14} -> {change.new:<14}{delta}")
-    if len(changes) > 20:
-        print(f"  ... and {len(changes) - 20} more - see the Qty & Length sheet")
-
-
 def _report_holds(chain, tracker: Path) -> None:
     """Tell the user what is outstanding and what still needs a reason."""
     outstanding = chain.outstanding
@@ -221,7 +204,6 @@ def _track_issue(args: argparse.Namespace, settings, folder: Path, register) -> 
     write_tracker(chain, tracker)
 
     _print_tracker(chain)
-    _report_spec(chain)
     _report_holds(chain, tracker)
     print(f"\nTracker updated: {tracker}")
     return tracker
@@ -260,7 +242,6 @@ def cmd_track(args: argparse.Namespace) -> int:
     print(f"Project: {chain.project}")
     print(f"Approved baseline: {chain.baseline_label or '(none yet)'}")
     _print_tracker(chain)
-    _report_spec(chain)
     _report_holds(chain, tracker)
     print(f"\nTracker written to: {tracker}")
     return 0
@@ -342,6 +323,55 @@ def cmd_diff(args: argparse.Namespace) -> int:
     write_comparison_report(result, out)
     print(f"\nComparison report written to: {out}")
     return 0 if result.is_identical or not args.strict else 2
+
+
+def cmd_specs(args: argparse.Namespace) -> int:
+    """Compare the five title-block values of two issues, OLD against NEW."""
+    settings = load_settings(args.settings)
+    try:
+        old_folder, new_folder = order_folders(args.first, args.second)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
+    print(f"OLD: {old_folder}")
+    print(f"NEW: {new_folder}")
+    old = build_register(old_folder, settings=settings,
+                         progress=None if args.quiet else _progress)
+    new = build_register(new_folder, settings=settings,
+                         progress=None if args.quiet else _progress)
+    result = compare_specs(old, new, settings,
+                           old_label=old_folder.name, new_label=new_folder.name)
+    if not result.parts:
+        print("No single part drawings found in either folder.", file=sys.stderr)
+        return 1
+
+    out = Path(args.output) if args.output else new_folder / suggest_spec_name(result)
+    write_spec_report(result, out)
+
+    from .spec_compare import CHANGED, DECREASED, FIELDS, INCREASED
+
+    print()
+    print(f"{result.parts} part(s) in both issues.", end="")
+    for count, side in ((len(result.only_in_old), "OLD"),
+                        (len(result.only_in_new), "NEW")):
+        if count:
+            print(f"  {count} only in {side}.", end="")
+    print()
+    print()
+    print(f"{'Value':<10}{'Changed':>9}{'Increased':>11}{'Decreased':>11}"
+          f"{'Changed':>9}")
+    print("-" * 50)
+    for spec in FIELDS:
+        sheet = result.sheets[spec.name]
+        print(f"{spec.name:<10}{sheet.moved or '-':>9}{sheet.count(INCREASED):>11}"
+              f"{sheet.count(DECREASED):>11}{sheet.count(CHANGED):>9}")
+    print()
+    print("Nothing moved - every part is the same in both issues."
+          if result.is_identical else
+          f"{result.moved} value(s) moved.")
+    print(f"Report written to: {out}")
+    return 0
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
@@ -467,6 +497,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Exit with status 2 when the issues differ")
     p.add_argument("-q", "--quiet", action="store_true")
     p.set_defaults(func=cmd_diff)
+
+    p = sub.add_parser("specs", help="Compare part quantities, profiles, "
+                                     "materials, lengths and weights: OLD vs NEW")
+    p.add_argument("first", help="One issue folder - its name must contain OLD or NEW")
+    p.add_argument("second", help="The other issue folder")
+    p.add_argument("-o", "--output", help="Output report .xlsx path")
+    p.add_argument("-q", "--quiet", action="store_true")
+    p.set_defaults(func=cmd_specs)
 
     p = sub.add_parser("calibrate", help="Inspect one PDF to tune extraction patterns")
     p.add_argument("pdf", help="A representative drawing PDF")

@@ -27,6 +27,7 @@ from app import local_disk as disk                 # noqa: E402
 from app import workspace as ws                    # noqa: E402
 from app.main import app                           # noqa: E402
 
+from conftest import make_drawing                  # noqa: E402
 from fabdoc.tracking import load_state, state_path_for   # noqa: E402
 
 
@@ -548,6 +549,100 @@ def test_a_drawing_can_be_tested_against_the_patterns_on_the_page(local: TestCli
 
 
 # ----------------------------------------------------------------- download
+
+
+def _spec_folder(root: Path, name: str, parts: dict) -> Path:
+    folder = root / name
+    for idx, (mark, (qty, length)) in enumerate(parts.items(), start=1):
+        make_drawing(folder / "Single Part Drawings" / f"{idx}_{mark}.pdf", mark,
+                     revision=0, seq=idx, qty=qty, length=length,
+                     weight="9.5 lbs")
+    return folder
+
+
+def test_part_specs_is_a_page_of_its_own(local: TestClient):
+    """Not a panel over the register screen: it shares nothing with a run."""
+    page = local.get("/specs")
+    assert page.status_code == 200
+    assert 'id="panel-specs"' in page.text
+    assert 'id="s-first"' in page.text and 'id="s-open"' in page.text
+    # Its own scripts, and none of the register screen's machinery.
+    assert "/static/common.js" in page.text and "/static/specs.js" in page.text
+    assert 'id="sheet-host"' not in page.text
+
+    register = local.get("/")
+    assert 'id="panel-specs"' not in register.text
+    assert 'href="/specs"' in register.text, "and a way to reach it"
+
+
+def test_a_bare_folder_of_part_drawings_is_read(local: TestClient, tmp_path: Path):
+    """What somebody hands this screen: two revisions of one set, pulled out.
+
+    There is no "Single Part Drawings" category in that shape - the folder
+    itself is the category, under whatever name - and insisting on one refuses
+    the very case the screen is for.
+    """
+    for side, qty in (("OLD", "2"), ("NEW", "5")):
+        make_drawing(tmp_path / side / side / f"17a25 - Rev 0.pdf", "17a25",
+                     revision=0, qty=qty, length="2'-0\"", weight="9 lbs")
+
+    started = local.post("/api/specs", data={
+        "first": str(tmp_path / "OLD"), "second": str(tmp_path / "NEW"),
+        "output_folder": str(tmp_path / "out"), "output_name": "S.xlsx",
+    })
+    done = _finish(local, started.json()["job"])
+    assert done["state"] == "done", done.get("error")
+
+    qty = next(f for f in done["result"]["fields"] if f["name"] == "Qty")
+    assert qty["rows"] == [{"member": "17a25", "old": "2", "new": "5",
+                            "change": "Increased"}]
+
+
+def test_the_spec_report_reads_the_folders_the_names_say(local: TestClient,
+                                                         tmp_path: Path):
+    """OLD and NEW come from the folder names, not from which box they went in."""
+    _spec_folder(tmp_path, "12. Zone 1 OLD", {"17a25": ("2", "2'-0\"")})
+    _spec_folder(tmp_path, "18. Zone 1 NEW", {"17a25": ("5", "2'-0\"")})
+
+    started = local.post("/api/specs", data={
+        # deliberately the wrong way round
+        "first": str(tmp_path / "18. Zone 1 NEW"),
+        "second": str(tmp_path / "12. Zone 1 OLD"),
+        "output_folder": str(tmp_path / "out"), "output_name": "S.xlsx",
+    })
+    done = _finish(local, started.json()["job"])
+    assert done["state"] == "done", done.get("error")
+    payload = done["result"]
+
+    assert payload["old_label"] == "12. Zone 1 OLD"
+    assert payload["new_label"] == "18. Zone 1 NEW"
+    qty = next(f for f in payload["fields"] if f["name"] == "Qty")
+    assert qty["rows"] == [{"member": "17a25", "old": "2", "new": "5",
+                            "change": "Increased"}]
+    assert (tmp_path / "out" / "S.xlsx").is_file()
+
+
+def test_a_folder_that_says_neither_is_refused_before_the_run(local: TestClient,
+                                                              tmp_path: Path):
+    _spec_folder(tmp_path, "12. Zone 1", {"17a25": ("2", "2'-0\"")})
+    _spec_folder(tmp_path, "18. Zone 1 NEW", {"17a25": ("5", "2'-0\"")})
+
+    refused = local.post("/api/specs", data={
+        "first": str(tmp_path / "12. Zone 1"),
+        "second": str(tmp_path / "18. Zone 1 NEW"),
+        "output_folder": str(tmp_path / "out"), "output_name": "S.xlsx",
+    })
+    assert refused.status_code == 400
+    assert "OLD" in refused.json()["detail"]
+
+
+def test_a_remote_client_cannot_read_two_folders_off_the_server(remote: TestClient,
+                                                                tmp_path: Path):
+    """Both sides are folders on disk, so the screen is local-only."""
+    assert remote.post("/api/specs", data={
+        "first": str(tmp_path / "12. Zone 1 OLD"),
+        "second": str(tmp_path / "18. Zone 1 NEW"),
+    }).status_code == 403
 
 
 def test_only_files_this_app_wrote_can_be_opened_or_downloaded(local: TestClient,

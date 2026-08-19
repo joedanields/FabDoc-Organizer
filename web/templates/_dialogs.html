@@ -1,0 +1,20 @@
+<div class="backdrop" id="pick-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pick-title">
+    <h2 id="pick-title">Choose a folder</h2>
+    <div class="batch">
+      <input type="text" id="pick-path" aria-label="Path" placeholder="Type or paste a path">
+      <button id="pick-go">Go</button>
+      <button id="pick-up" title="Parent folder (Backspace)">Up</button>
+      <button id="pick-new">New folder</button>
+    </div>
+    <div id="pick-drives" class="drives"></div>
+    <ul id="pick-list" class="list picker"></ul>
+    <div class="modal-actions">
+      <span id="pick-status" class="status" role="status" aria-live="polite"></span>
+      <button id="pick-cancel">Cancel</button>
+      <button id="pick-ok" class="primary">Use this folder</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
