@@ -545,20 +545,30 @@ $("scan").onclick = async () => {
 
 /* --------------------------------------------------- existing tracker */
 
+/* Where the tracker is, asked of the server rather than composed here. The
+   browser cannot know that an empty name box falls back to a derived one, or
+   that a name typed without .xlsx gets the extension - and a path that differs
+   by either of those reports on a chain the run is not going to touch. */
+function trackerQuery(extra) {
+  return {
+    folder: LOCAL ? $("track-folder").value.trim() : "",
+    name: $("track-name").value.trim(),
+    project: $("m-project").value.trim(),
+    ...extra,
+  };
+}
+
 async function describeTracker() {
   const el = $("track-info");
-  const folder = LOCAL ? $("track-folder").value.trim() : "";
-  const name = $("track-name").value.trim();
-  if (!name) { status(el, ""); return; }
-  const path = folder ? join(folder, name) : name;
+  if (!$("track-name").value.trim()) { status(el, ""); return; }
   try {
     const d = await send("/api/tracker/info", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        path, stage: $("stage").value, round: $("round").value.trim(),
+      body: JSON.stringify(trackerQuery({
+        stage: $("stage").value, round: $("round").value.trim(),
         label: packageLabel,
-      }),
+      })),
     });
     if (d.clash) {
       // Said here, not at the end of the run: this is the one thing about a
@@ -645,7 +655,7 @@ if (LOCAL) {
    opposite things done to a chain the whole workbook replays from, so it is
    asked before a single PDF is read - by then the answer would be about a chain
    that had already changed. Returns the answer, or null to call the run off. */
-async function askRound(path) {
+async function askRound() {
   const stage = $("stage").value;
   const round = $("round").value.trim();
   if (!stage || !round) return "next";
@@ -654,7 +664,7 @@ async function askRound(path) {
     d = await send("/api/tracker/info", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path, stage, round, label: packageLabel }),
+      body: JSON.stringify(trackerQuery({ stage, round, label: packageLabel })),
     });
   } catch {
     return "next";              // the run itself will report a bad tracker path
@@ -705,12 +715,9 @@ $("generate").onclick = async () => {
   }
   project = $("m-project").value;
 
-  const trackerTarget = LOCAL && $("track-folder").value.trim()
-    ? join($("track-folder").value.trim(), $("track-name").value.trim())
-    : $("track-name").value.trim();
   let onClash = "next";
-  if (tracking && trackerTarget) {
-    onClash = await askRound(trackerTarget);
+  if (tracking) {
+    onClash = await askRound();
     if (onClash === null) {
       status($("gen-status"), "Left alone - nothing was written.");
       return;
@@ -846,6 +853,17 @@ function renderGenerate(data) {
     });
     if (data.chain.outstanding)
       lines.push(`${data.chain.outstanding} approved member(s) still on hold (not removed).`);
+    const moved = (data.chain.spec_changes || []).filter(
+      (c) => c.issue === data.chain.issues[data.chain.issues.length - 1].label);
+    if (moved.length) {
+      // What changed, not just that something did: these are the numbers the
+      // shop cuts to, and they are worth reading before the workbook is opened.
+      lines.push(`${moved.length} quantity/length change(s) in this issue:`);
+      moved.slice(0, 10).forEach((c) => lines.push(
+        `  ${c.member.padEnd(14)} ${c.field.padEnd(7)} ${c.old} -> ${c.new}` +
+        (c.delta ? `   (${c.delta})` : "")));
+      if (moved.length > 10) lines.push(`  ... and ${moved.length - 10} more`);
+    }
     lines.push(`Tracker saved: ${data.chain.tracker_path || data.chain.tracker}`);
     trackerPath = data.chain.tracker_path || "";
     lastWritten.tracker = trackerPath;

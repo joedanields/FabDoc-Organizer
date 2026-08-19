@@ -27,6 +27,8 @@ from app import local_disk as disk                 # noqa: E402
 from app import workspace as ws                    # noqa: E402
 from app.main import app                           # noqa: E402
 
+from fabdoc.tracking import load_state, state_path_for   # noqa: E402
+
 
 class _Client:
     """Rewrites the ASGI scope so the test client presents as a real address.
@@ -686,6 +688,71 @@ def test_the_answer_to_a_clash_decides_what_happens_to_the_round(
     assert payload["round"]["overwritten"] is (answer == "overwrite")
     # Whichever was chosen, the issue that is there is this folder.
     assert payload["chain"]["issues"][-1]["label"] == single_category_folder.name
+
+
+def test_a_clash_nobody_answered_is_refused_rather_than_renumbered(
+        local: TestClient, project_folder: Path, single_category_folder: Path,
+        tmp_path: Path):
+    """A page too old to ask must not get a silent answer.
+
+    A tab left open across a restart posts no answer at all. Renumbering on its
+    behalf is the one outcome nothing reports: the engineer typed round 1 and
+    the workbook comes back saying round 2.
+    """
+    tracker = tmp_path / "trackers" / "Zone 1 - Tracker.xlsx"
+    common = {
+        "categories": ["Structural", "Erection"],
+        "output_folder": str(tmp_path / "out"),
+        "track": "true", "stage": "IFA", "round_no": "1", "project": "Zone 1",
+        "tracker_folder": str(tracker.parent), "tracker_name": tracker.name,
+    }
+    started = local.post("/api/generate", data={
+        **common, "local_path": str(project_folder), "output_name": "R1.xlsx"})
+    assert _finish(local, started.json()["job"])["state"] == "done"
+
+    refused = local.post("/api/generate", data={
+        **common, "local_path": str(single_category_folder),
+        "output_name": "R2.xlsx"})
+    assert refused.status_code == 409
+    assert "IFA-1 is already tracked" in refused.json()["detail"]
+
+    state = load_state(state_path_for(tracker))
+    assert [e.code for e in state.issues] == ["IFA-1"], "the chain was written anyway"
+
+
+def test_the_page_is_told_where_the_run_will_write(local: TestClient,
+                                                   project_folder: Path,
+                                                   tmp_path: Path):
+    """The boxes decide the tracker, not a path the browser composed.
+
+    Composed there, the two disagree the moment the name box is left empty or
+    typed without an extension - and the page then reports on a chain the run is
+    never going to touch, which is how a clash goes unasked.
+    """
+    chosen = tmp_path / "trackers"
+    started = local.post("/api/generate", data={
+        "local_path": str(project_folder), "categories": ["Structural"],
+        "output_folder": str(tmp_path / "out"), "output_name": "R.xlsx",
+        "track": "true", "stage": "IFA", "round_no": "1", "project": "Zone 1",
+        "tracker_folder": str(chosen), "tracker_name": "Zone 1 - Tracker",
+    })
+    assert _finish(local, started.json()["job"])["state"] == "done"
+    assert (chosen / "Zone 1 - Tracker.xlsx").is_file()
+
+    # The name as it was typed - no extension - still finds that chain.
+    d = local.post("/api/tracker/info", json={
+        "folder": str(chosen), "name": "Zone 1 - Tracker", "project": "Zone 1",
+        "stage": "IFA", "round": "1", "label": "somebody else",
+    }).json()
+    assert d["tracked"] is True
+    assert d["clash"]["code"] == "IFA-1"
+    assert d["clash"]["label"] == project_folder.name
+
+    # An empty name box falls back to the derived one, exactly as a run does.
+    empty = local.post("/api/tracker/info", json={
+        "folder": str(chosen), "name": "", "project": "Zone 1",
+    }).json()
+    assert Path(empty["path"]).name == "Zone 1 - Tracker.xlsx"
 
 
 def test_parts_and_assemblies_share_one_tracker_workbook(local: TestClient,

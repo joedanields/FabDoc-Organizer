@@ -182,8 +182,23 @@ The tracker has four sheets:
 | --- | --- |
 | Tracker | One row per issue: stage, round, date, added / revised / removed / released / on hold |
 | History - *category* | Member down the side, issue across the top, revision in the cell. One sheet per drawing category, all in the same workbook |
+| Qty | How many of each part to make, issue by issue, with what moved spelled out |
+| Length | How long to cut each part, issue by issue, with what moved spelled out |
 | Change Log | Every change, flattened, issue by issue |
 | On Hold | Approved members not yet released, and why |
+
+A fabrication title block states the two numbers the shop works to - `Qty 3`,
+`Length 3'-11 5/8"` - as a table, the heading in one row and the value beneath
+it. Both are read by column position off the **single part drawings**, carried
+into the register as two extra columns, and tracked issue by issue on a sheet
+each - they are read for different reasons, and one cell holding both cannot be
+sorted or totalled as either. A quantity that goes from 3 to 2, or a part that
+gets 1 13/16" longer, is amber on its sheet, written out in words in that row's
+last column, and a row in the Change Log; a revision letter on its own says a
+drawing changed without saying what changed in it.
+
+The mark itself is spelled the way the **file name** spells it - `17HSP134` and
+`17hsp134` are the same piece, and the register says what the file says.
 
 An assembly drawing and a single-part drawing routinely carry the **same mark**
 and are different deliverables — one is fabricated, the other is cut. They are

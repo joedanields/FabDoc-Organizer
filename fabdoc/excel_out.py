@@ -106,6 +106,12 @@ def _write_category_sheet(ws: Worksheet, register: Register,
     # Project title and date live in the header band above, not repeated on
     # every row - the register is a deliverable, not a database export.
     headers = ["S.No", "Member Name", "Revision No"]
+    # Only when the drawings carry them. A fabrication title block states how
+    # many to make and how long to cut; an approval-stage sheet often does not,
+    # and two blank columns on every row of a deliverable is worse than none.
+    show_spec = any(r.quantity or r.length for r in category.records)
+    if show_spec:
+        headers += ["Qty", "Length"]
     if include_source:
         headers += ["Source File", "Notes"]
 
@@ -143,12 +149,16 @@ def _write_category_sheet(ws: Worksheet, register: Register,
         for rec in records:
             seq: object = int(rec.seq_no) if rec.seq_no.isdigit() else rec.seq_no
             values: list[object] = [seq, rec.member_name, rec.revision]
+            if show_spec:
+                qty: object = int(rec.quantity) if rec.quantity.isdigit() else rec.quantity
+                values += [qty, rec.length]
             if include_source:
                 values += [rec.source_file, rec.error or rec.note_text]
+            centred = {1, 3} | ({4, 5} if show_spec else set())
             for idx, value in enumerate(values, start=1):
                 cell = ws.cell(row=row, column=idx, value=value)
                 cell.border = _BORDER
-                cell.alignment = _CENTER if idx in (1, 3) else _LEFT
+                cell.alignment = _CENTER if idx in centred else _LEFT
                 if rec.error:
                     cell.fill = _ERROR_FILL
                 elif rec.needs_review:
@@ -200,7 +210,7 @@ def _write_category_sheet(ws: Worksheet, register: Register,
     if len(groups) == 1 and not any(z for z, _ in groups) and row > header_row + 1:
         ws.auto_filter.ref = f"A{header_row}:{last_col}{row - 1}"
 
-    widths = [8, 26, 12, 40, 34]
+    widths = [8, 26, 12] + ([7, 15] if show_spec else []) + [40, 34]
     for idx, width in enumerate(widths[: len(headers)], start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
 

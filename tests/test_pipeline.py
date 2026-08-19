@@ -783,3 +783,91 @@ def test_mixed_case_marks_do_not_split_a_band(tmp_path: Path):
     assert [b for b, _ in bands] == [("type", "CH")]
     assert len(bands[0][1]) == 3
     assert sorted(r.member_name for r in bands[0][1]) == ["17CH2", "17Ch3", "17ch1"]
+
+
+# ------------------------------------------------- quantity and cut length
+
+
+def test_quantity_and_length_are_read_from_the_title_block_table(tmp_path: Path):
+    """The two numbers the shop works to, read by column rather than by label.
+
+    They are written as a table - the heading in one row, the value in the row
+    below - so read as flowing text "Qty" is followed by "Profile" and no
+    same-line pattern can reach the number.
+    """
+    pdf = make_drawing(tmp_path / "part.pdf", "17a25", revision=0,
+                       qty="3", length="3'-11 5/8\"")
+    rec = extract_drawing(pdf, category="Part")
+    assert rec.quantity == "3"
+    assert rec.length == "3'-11 5/8\""
+    assert rec.length_inches == 47.625
+    assert rec.quantity_source == SOURCE_TITLEBLOCK
+    assert rec.length_source == SOURCE_TITLEBLOCK
+
+
+def test_a_drawing_without_them_says_nothing_rather_than_guessing(tmp_path: Path):
+    """An approval sheet carries no quantity, and a wrong one is worse than none."""
+    pdf = make_drawing(tmp_path / "approval.pdf", "17172C172", revision="A")
+    rec = extract_drawing(pdf, category="Part")
+    assert rec.quantity == "" and rec.length == ""
+    assert rec.length_inches is None
+
+
+def test_only_single_part_drawings_are_read_for_them(tmp_path: Path):
+    """An assembly title block carries a count too - of assemblies, not of cuts.
+
+    Tracked in the same column as a part's quantity, the two read as one number
+    meaning two different things.
+    """
+    pdf = make_drawing(tmp_path / "assembly.pdf", "17172C172", revision=0,
+                       qty="3", length="3'-11 5/8\"")
+    assert extract_drawing(pdf, category="Assembly").quantity == ""
+    assert extract_drawing(pdf, category="Part").quantity == "3"
+
+
+@pytest.mark.parametrize("stem, drawn", [("17HSP134", "17hsp134"),
+                                         ("17hsp135", "17HSP135")])
+def test_the_file_name_decides_the_case_of_the_mark(tmp_path: Path, stem, drawn):
+    """The register is worked from on a shop floor: it says what the file says."""
+    pdf = make_drawing(tmp_path / f"{stem}  - Rev 0.pdf", drawn, revision=0)
+    assert extract_drawing(pdf, category="Part").member_name == stem
+
+
+def test_a_filename_naming_a_different_mark_does_not_override_it(tmp_path: Path):
+    """Only the spelling is taken, and only when the two are the same mark."""
+    pdf = make_drawing(tmp_path / "17hsp999  - Rev 0.pdf", "17HSP134", revision=0)
+    assert extract_drawing(pdf, category="Part").member_name == "17HSP134"
+
+
+def test_the_register_shows_them_only_when_the_drawings_carry_them(tmp_path: Path):
+    root = tmp_path / "Zone 1 for Fabrication"
+    for i, (mark, qty, length) in enumerate(
+            [("17a25", "3", "3'-11 5/8\""), ("17a26", "1", "2'-0\"")], start=1):
+        make_drawing(root / "Single Part Drawings" / f"{i}_{mark}.pdf", mark,
+                     revision=0, seq=i, qty=qty, length=length)
+
+    out = write_register(build_register(root), tmp_path / "R.xlsx")
+    wb = load_workbook(out)
+    try:
+        ws = wb[[s for s in wb.sheetnames if s != "Summary"][0]]
+        rows = [[c for c in row if c is not None]
+                for row in ws.iter_rows(values_only=True)]
+        headers = next(r for r in rows if "Member Name" in [str(c) for c in r])
+        assert headers == ["S.No", "Member Name", "Revision No", "Qty", "Length"]
+        row = next(r for r in rows if "17a25" in [str(c) for c in r])
+        assert row[3] == 3 and row[4] == "3'-11 5/8\""
+    finally:
+        wb.close()
+
+
+def test_a_register_read_back_still_carries_them(tmp_path: Path):
+    """The comparison and validation screens work off a written register."""
+    root = tmp_path / "Zone 1 for Fabrication"
+    make_drawing(root / "Single Part Drawings" / "1_17a25.pdf", "17a25",
+                 revision=0, seq=1, qty="3", length="3'-11 5/8\"")
+    out = write_register(build_register(root), tmp_path / "R.xlsx")
+
+    back = read_register(out)
+    rec = back.all_records()[0]
+    assert rec.quantity == "3"
+    assert rec.length == "3'-11 5/8\"" and rec.length_inches == 47.625

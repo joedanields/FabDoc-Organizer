@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -25,8 +24,8 @@ from .excel_out import (_BORDER, _CENTER, _HEADER_FILL, _HEADER_FONT, _LABEL_FON
                         _LEFT, _OK_FILL, _REVIEW_FILL, _TITLE_FILL, _TITLE_FONT,
                         _VALUE_FONT, _save_workbook)
 from . import sequencing
-from .tracking import (STAGE_IFA, STAGE_IFF, PackageChain,
-                       split_member_id)
+from .tracking import (FIELD_LENGTH, FIELD_QTY, STAGE_IFA, STAGE_IFF,
+                       PackageChain, split_member_id)
 
 _IFA_FILL = PatternFill("solid", fgColor="DDEBF7")    # blue: still in approval
 _IFF_FILL = PatternFill("solid", fgColor="E2EFDA")    # green: released to shop
@@ -45,6 +44,9 @@ _BAND_FONT = Font(bold=True, size=10, color="375623")
 # one mark on the grid that says the tracker itself is missing something.
 _REV_ERR_FILL = PatternFill("solid", fgColor="FFC7CE")
 _REV_ERR_FONT = Font(bold=True, size=10, color="9C0006")
+# A quantity or a length that moved. Amber, not red: it is a change to confirm,
+# not a mistake to correct.
+_SPEC_FONT = Font(bold=True, size=10, color="843C0C")
 
 
 def _title(ws: Worksheet, text: str, width: int) -> None:
@@ -278,8 +280,8 @@ _LEGEND_FILLS = {"ifa": _IFA_FILL, "iff": _IFF_FILL, "hold": _HOLD_FILL,
 # is wrong rather than a state the member is in, so it says what was expected.
 _REV_ERR_NOTE = ("A red revision skipped a rung: approval starts at A and steps "
                  "one letter per re-approval, fabrication starts at 0 and steps "
-                 "one number per revised-as-noted. Hover the cell for the step "
-                 "that is missing.")
+                 "one number per revised-as-noted. A red B means the A never "
+                 "came - the issue that carried it is missing from this chain.")
 
 
 def _write_legend(ws: Worksheet, column: int, row: int) -> None:
@@ -326,18 +328,35 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
     different deliverables that happen to share a mark - reading them in one
     list invites treating a cut part as a fabricated assembly.
     """
-    labels = [e.label for e in chain.issues]
-    columns = ["Member Name", "Zone"] + [e.code for e in chain.issues]
+    ordered = members if members is not None else list(chain.history)
+    held = {h.member_key for h in chain.outstanding}
+
+    def was_in(entry) -> bool:
+        """Does this issue have anything to say about this category?
+
+        Single parts are detailed for fabrication, so an approval round carries
+        none of them, and a column of blanks across every part reads as a
+        package that dropped them all. An issue still earns its column when it
+        is where a member was dropped, or a release that left one behind - the
+        D and the H are what those columns are carrying.
+        """
+        if any(chain.history.get(k, {}).get(entry.label) for k in ordered):
+            return True
+        if any(chain.dropped_at.get(k) == entry.label for k in ordered):
+            return True
+        return entry.stage == STAGE_IFF and any(k in held for k in ordered)
+
+    issues = [e for e in chain.issues if was_in(e)]
+    labels = [e.label for e in issues]
+    columns = ["Member Name", "Zone"] + [e.code for e in issues]
     heading = "MEMBER HISTORY - REVISION BY ISSUE"
     if category:
         heading += f"   ({category})"
     _title(ws, heading, max(len(columns), 3))
 
     _headers(ws, columns, 3)
-    held = {h.member_key for h in chain.outstanding}
 
     row = 4
-    ordered = members if members is not None else list(chain.history)
     # Same banding as the register: sequence for assemblies, type for single
     # parts. A history sheet of 900 members read as one list hides which slice
     # of work each row belongs to.
@@ -360,7 +379,7 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
             head.alignment = _LEFT
             head.border = _BORDER
             row += 1
-        row = _history_rows(ws, chain, grouped[band], labels, held, row)
+        row = _history_rows(ws, chain, grouped[band], issues, held, row)
 
     _write_legend(ws, len(columns) + 2, 3)
 
@@ -372,8 +391,9 @@ def _write_history(ws: Worksheet, chain: PackageChain, category: str = "",
 
 
 def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
-                  labels: list[str], held: set, row: int) -> int:
+                  issues: list, held: set, row: int) -> int:
     """The member rows of one band. Returns the next free row."""
+    labels = [e.label for e in issues]
     for member in members:
         per_issue = chain.history.get(member, {})
         faults = chain.rev_errors.get(member, {})
@@ -388,14 +408,14 @@ def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
             cell.border = _BORDER
             cell.alignment = _LEFT if c_idx == 1 else _CENTER
             if c_idx > 2:
-                entry = chain.issues[c_idx - 3]
-                fault = faults.get(entry.label)
-                if value and fault:
+                entry = issues[c_idx - 3]
+                if value and faults.get(entry.label):
                     # The revision itself is still printed - the reader needs to
-                    # see that it is a B to see that the A never came.
+                    # see that it is a B to see that the A never came. What red
+                    # means is in the legend beside the grid, not in a comment
+                    # that has to be hovered to be found.
                     cell.fill = _REV_ERR_FILL
                     cell.font = _REV_ERR_FONT
-                    cell.comment = Comment(f"{name}: revision {fault}.", "FabDoc")
                 elif value:
                     cell.fill = _IFF_FILL if entry.stage == STAGE_IFF else _IFA_FILL
                 elif entry.stage == STAGE_IFF and member in held:
@@ -415,6 +435,156 @@ def _history_rows(ws: Worksheet, chain: PackageChain, members: list[str],
         row += 1
 
     return row
+
+
+# One sheet per number, not one sheet carrying both. They are read for
+# different reasons - how many to make, how long to cut - and a cell holding
+# "3 @ 3'-11 5/8"" cannot be sorted, filtered or totalled as either.
+_SPEC_SHEETS = {
+    FIELD_QTY: ("Qty", "QUANTITY - BY ISSUE   (SINGLE PART DRAWINGS)", "part(s)"),
+    FIELD_LENGTH: ("Length", "CUT LENGTH - BY ISSUE   (SINGLE PART DRAWINGS)",
+                   "part(s)"),
+}
+
+
+def spec_history(chain: PackageChain, field_name: str) -> "OrderedDict[str, dict[str, str]]":
+    """The per-issue values of one of the two numbers."""
+    return chain.qty_history if field_name == FIELD_QTY else chain.length_history
+
+
+def has_spec(chain: PackageChain, field_name: str) -> bool:
+    """Does any member of this package carry this number?
+
+    An approval-only package, or one whose title blocks were never read for it,
+    gets no sheet rather than an empty one.
+    """
+    return any(any(v for v in per.values())
+               for per in spec_history(chain, field_name).values())
+
+
+def _write_spec(ws: Worksheet, chain: PackageChain, field_name: str) -> None:
+    """One of the two shop numbers, member down the side, issue across the top.
+
+    Single-part drawings only: a part is one piece cut to one length, and that
+    is what the shop works to.
+
+    The revision grid says a drawing changed. This says what the shop was told
+    to make each time it was issued, and the last two columns say what moved in
+    words - a sheet that has to be hovered cell by cell to be read is not a
+    report.
+    """
+    _sheet_name, title, unit = _SPEC_SHEETS[field_name]
+    history = spec_history(chain, field_name)
+    code_for = {e.label: e.code for e in chain.issues}
+    changes = [c for c in chain.spec_changes if c.field == field_name]
+
+    # Only the members that carry this number, and only the issues that stated
+    # it. Everything else is a blank, and a blank column invites the reading
+    # that the parts were dropped that round.
+    members = [key for key in chain.history if any(history.get(key, {}).values())]
+    issues = [e for e in chain.issues
+              if any(history.get(k, {}).get(e.label) for k in members)]
+    labels = [e.label for e in issues]
+
+    categories = {chain.member_info.get(k, {}).get("category", "") for k in members}
+    show_category = len(categories) > 1
+
+    head = ["Member Name"] + (["Category"] if show_category else []) + \
+           ["Zone", "Sequence"]
+    columns = head + [e.code for e in issues] + ["Changed", "What Changed"]
+    first_issue = len(head) + 1
+    _title(ws, title, len(columns))
+
+    note = ws.cell(
+        row=2, column=1,
+        value=f"{len(members)} {unit} across {len(issues)} issue(s).  "
+              + (f"{len(changes)} change(s), each one spelled out in the last "
+                 f"column." if changes else "Nothing has changed anywhere in "
+                                            "this package."),
+    )
+    note.font = Font(italic=True, size=9,
+                     color="843C0C" if changes else "375623")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(columns))
+
+    _headers(ws, columns, 3)
+
+    # Banded by sequence, the same as the history sheet and the register.
+    grouped: "OrderedDict[tuple[str, str], list[str]]" = OrderedDict()
+    for key in members:
+        info = chain.member_info.get(key, {})
+        grouped.setdefault((info.get("band_kind", ""), info.get("band", "")),
+                           []).append(key)
+
+    row = 4
+    for band in sorted(grouped, key=sequencing.band_sort_key):
+        if band[1] and len(grouped) > 1:
+            ws.merge_cells(start_row=row, start_column=1,
+                           end_row=row, end_column=len(columns))
+            head_cell = ws.cell(row=row, column=1,
+                                value=f"{sequencing.band_label(band)}"
+                                      f"   -   {len(grouped[band])} {unit}")
+            head_cell.font = _BAND_FONT
+            head_cell.fill = _BAND_FILL
+            head_cell.alignment = _LEFT
+            head_cell.border = _BORDER
+            row += 1
+
+        for key in grouped[band]:
+            info = chain.member_info.get(key, {})
+            moved_at: dict[str, list] = {}
+            for change in changes:
+                if change.member_key == key:
+                    moved_at.setdefault(change.label, []).append(change)
+            # The sheet is the field, so the words do not repeat it.
+            spelled = "; ".join(
+                f"{c.old} to {c.new}" + (f" ({c.delta})" if c.delta else "")
+                + f" at {code_for.get(c.label, c.label)}"
+                for cells in moved_at.values() for c in cells)
+
+            values: list[object] = [info.get("name") or split_member_id(key)[1]]
+            if show_category:
+                values.append(info.get("category", "") or "-")
+            values += [info.get("zone", "") or "-",
+                       sequencing.band_label(band) if band[1] else "-"]
+            for label in labels:
+                text = (history.get(key, {}).get(label) or "").strip()
+                # A quantity is a number and is written as one, so the column
+                # sorts and totals; a length is not a number in any unit Excel
+                # has, and is written as the sheet draws it.
+                values.append(int(text) if text.isdigit() else text)
+            values += [field_name if moved_at else "No change", spelled]
+
+            for c_idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=c_idx, value=value)
+                cell.border = _BORDER
+                cell.alignment = _LEFT if c_idx in (1, len(columns)) else _CENTER
+                if c_idx == len(columns) - 1:               # the Changed column
+                    cell.fill = _REVIEW_FILL if moved_at else _OK_FILL
+                    cell.font = _SPEC_FONT if moved_at else _VALUE_FONT
+                elif c_idx == len(columns):
+                    cell.font = _SPEC_FONT if moved_at else _VALUE_FONT
+                elif c_idx >= first_issue:
+                    entry = issues[c_idx - first_issue]
+                    if moved_at.get(entry.label):
+                        # Amber where it moved, so the eye lands on the issue
+                        # that did it; the words are on the same row.
+                        cell.fill = _REVIEW_FILL
+                        cell.font = _SPEC_FONT
+                    elif value != "":
+                        cell.fill = _IFF_FILL if entry.stage == STAGE_IFF else _IFA_FILL
+            row += 1
+
+    ws.freeze_panes = f"{get_column_letter(first_issue)}4"
+    if row > 4:
+        ws.auto_filter.ref = f"A3:{get_column_letter(len(columns))}{row - 1}"
+    widths = [24] + ([12] if show_category else []) + [8, 14]
+    for idx, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = width
+    for idx in range(first_issue, first_issue + len(issues)):
+        ws.column_dimensions[get_column_letter(idx)].width = \
+            9 if field_name == FIELD_QTY else 16
+    ws.column_dimensions[get_column_letter(len(columns) - 1)].width = 12
+    ws.column_dimensions[get_column_letter(len(columns))].width = 58
 
 
 def _write_holds(ws: Worksheet, chain: PackageChain) -> None:
@@ -461,7 +631,7 @@ def _write_holds(ws: Worksheet, chain: PackageChain) -> None:
 def _write_changes(ws: Worksheet, chain: PackageChain) -> None:
     """Every change, issue by issue - the comparison log, flattened."""
     columns = ["Issue", "Code", "Stage", "Change", "Category", "Sequence",
-               "Member Name", "From Rev", "To Rev"]
+               "Member Name", "From", "To"]
     _title(ws, "CHANGE LOG", len(columns))
     _headers(ws, columns, 3)
 
@@ -473,6 +643,13 @@ def _write_changes(ws: Worksheet, chain: PackageChain) -> None:
             ("Removed", [(m, "", "") for m in step.removed], _HOLD_FILL),
             ("Released", [(m, "", "") for m in step.released], _IFF_FILL),
             ("On Hold", [(h.ident, h.revision, "") for h in step.on_hold], _HOLD_FILL),
+            # The revision groups say a drawing changed. These say what.
+            ("Qty changed", [(c.ident, c.old, c.new) for c in chain.spec_changes
+                             if c.field == "Qty" and c.label == step.new_label],
+             _REVIEW_FILL),
+            ("Length changed", [(c.ident, c.old, c.new) for c in chain.spec_changes
+                                if c.field == "Length" and c.label == step.new_label],
+             _REVIEW_FILL),
         ]
         for change, items, fill in groups:
             # Within a change, in sequence order: the log is read looking for
@@ -531,6 +708,14 @@ def write_tracker(chain: PackageChain, output_path: str | Path) -> Path:
         title = f"History - {category}" if category else "Member History"
         _write_history(wb.create_sheet(safe_sheet_name(title, used)), chain,
                        category, members)
+
+    # One sheet each, and only when the drawings carry that number: an
+    # approval-only package has neither, and an empty sheet is a question.
+    for field_name in (FIELD_QTY, FIELD_LENGTH):
+        if has_spec(chain, field_name):
+            sheet = wb.create_sheet(
+                safe_sheet_name(_SPEC_SHEETS[field_name][0], used))
+            _write_spec(sheet, chain, field_name)
 
     _write_changes(wb.create_sheet(safe_sheet_name("Change Log", used)), chain)
     if chain.holds:

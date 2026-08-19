@@ -363,14 +363,28 @@ python -m fabdoc generate "<folder>" --track --stage IFA --round 2 --on-clash ov
 
 `--on-clash` takes `ask` (default), `overwrite` or `next`.
 
-### The tracker's four sheets
+### The tracker's sheets
 
 | Sheet | What it answers |
 | --- | --- |
 | **Tracker** | One row per issue: stage, round, date, added / revised / removed / released / on hold |
 | **Member History** | Member down the side, issue across the top, revision in the cell |
+| **Qty** | How many of each part to make, issue by issue, and what moved |
+| **Length** | How long to cut each part, issue by issue, and what moved |
 | **Change Log** | Every change, flattened, issue by issue |
 | **On Hold** | Approved members not yet released, and why |
+
+**Qty** and **Length** appear only when the drawings carry that number — an
+approval title block usually carries neither.
+
+### The mark is spelled the way the file spells it
+
+A mark is an identifier, and the detailer types it into the file name the way it
+is meant to read. `17HSP134.pdf` and `17hsp134.pdf` are the same piece, but the
+register is worked from on a shop floor, so **the file name decides the case** —
+whatever the PDF's own text happens to use. Only the spelling is taken, and only
+when the file name names the same mark; a file name that disagrees about *which*
+mark this is stays a fallback, not an override.
 
 Member History is the one to read in a progress meeting:
 
@@ -379,6 +393,59 @@ Member History is the one to read in a progress meeting:
 17172C6   zone 1   A  B  -  -  -  |  -  -  -  -     dropped during approval
 17271X10  zone 2   -  -  -  A  A  |  -  -  -  -     entered late, still not shipped
 ```
+
+### Quantity and cut length
+
+A fabrication drawing states the two numbers the shop actually works to: how
+many of this piece to make, and how long to cut it. They sit in the title block
+as a table — the heading in one row, the value in the row beneath it:
+
+```
+Qty   Profile      Material   Length        Weight
+3     L3X3X3/16    A36        3'-11 5/8"    14.72 lbs
+```
+
+They are read off the **Single Part Drawings** folder only. A part is one piece
+cut to one length, and that is what its title block states; an assembly's title
+block carries a number too, but it counts assemblies rather than anything cut,
+and the two in one column read as one number meaning two different things.
+(`spec_categories` in the profile, if your part folder is named differently.)
+
+The value is found by column position rather than by a same-line label — read as
+flowing text those two rows interleave, so "Qty" is followed by "Profile" and no
+pattern can reach the number. Both appear as extra columns in the register (only
+when the drawings carry them), and each is tracked issue by issue on **its own
+sheet** — they are read for different reasons, and a cell holding
+`3 @ 3'-11 5/8"` cannot be sorted, filtered or totalled as either.
+
+**Length**
+
+| Member Name | Zone | Sequence | IFF-1 | IFF-2 | Changed | What Changed |
+| --- | --- | --- | --- | --- | --- | --- |
+| 17hsp133 | - | TYPE HSP | 0'-9 1/8" | | No change | |
+| 17hsp134 | - | TYPE HSP | 0'-8 5/16" | **0'-10 1/8"** | **Length** | 0'-8 5/16" to 0'-10 1/8" (+0'-1 13/16") at IFF-2 |
+
+**Qty** is the same sheet with the count in the cell, written as a number so the
+column sorts and totals.
+
+The cell that moved is amber so the eye lands on the issue that moved it, and
+the last two columns say what happened in words, on the same row — nothing on
+these sheets has to be hovered to be read. The difference is given in feet and
+inches, the units the shop cuts to. A part that never moved says **No change**
+outright, which is most of them: on a re-issue of 119 drawings nobody reads 119
+title blocks to find the three that moved.
+
+A part with no value for that number gets no row on its sheet, and an issue that
+stated none gets no column — an empty column invites the reading that the parts were dropped that
+round.
+
+The same changes appear in the Change Log as **Qty changed** and **Length
+changed** rows, so one filter answers "what actually changed in this issue" — a
+revision letter says a drawing changed without saying what changed in it.
+
+A member is compared against the last issue that carried a value, not the issue
+immediately before, so one absent from a release and back in the next has not
+changed twice.
 
 ### Fabrication releases: absent is not removed
 
@@ -516,6 +583,12 @@ loses the fill, and on hold is the one state the shop floor acts on.
 
 An empty cell means the member was not in that issue and nothing is owed: either
 it already shipped in another release, or it was dropped at re-approval.
+
+**A category gets columns only for the issues it was in.** Single parts are
+detailed for fabrication, so no part is in an approval round — and a column of
+blanks across every part reads as a package that dropped them all at that issue.
+An issue still keeps its column when it is the one that dropped a member (the
+`D`) or a release that left one behind (the `H`).
 
 **A red revision skipped a rung.** Approval runs on letters and fabrication on
 numbers, and each ladder is climbed one rung at a time: a drawing's first

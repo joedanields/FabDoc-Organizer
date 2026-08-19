@@ -48,6 +48,13 @@ class DrawingRecord:
     member_name: str = ""
     revision: str = ""
 
+    # What the shop is told to make: how many, and how long to cut them.
+    # Length is kept as the sheet draws it (8'-7 15/16") and again in inches,
+    # because a string cannot answer "by how much did it change".
+    quantity: str = ""
+    length: str = ""
+    length_inches: float | None = None
+
     # Derived from the member mark: "17172C172" -> job 17, sequence 172, zone 1.
     job_no: str = ""
     seq_group: str = ""
@@ -58,6 +65,8 @@ class DrawingRecord:
     seq_source: str = SOURCE_NONE
     member_source: str = SOURCE_NONE
     revision_source: str = SOURCE_NONE
+    quantity_source: str = SOURCE_NONE
+    length_source: str = SOURCE_NONE
 
     page_count: int = 0
     notes: list[str] = field(default_factory=list)
@@ -188,6 +197,121 @@ def _is_mark(value: str, shape: re.Pattern[str], stopwords: set[str],
     if not text or text in stopwords or not shape.match(text):
         return False
     return not any(r.search(text) for r in rejects)
+
+
+# ---------------------------------------------------------------------------
+# Quantity and cut length
+# ---------------------------------------------------------------------------
+
+# 8'-7 15/16"  /  3'-11 5/8"  /  4'-0"
+_FEET_INCHES = re.compile(
+    r"^(\d+)\s*'\s*-?\s*(\d+)?(?:\s+(\d+)\s*/\s*(\d+))?\s*\"?$"
+)
+# A bare length in inches, with or without a fraction: 29.00, 12 3/4"
+_INCHES_ONLY = re.compile(r"^(\d+(?:\.\d+)?)?(?:\s*(\d+)\s*/\s*(\d+))?\s*\"?$")
+
+_QTY_SHAPE = re.compile(r"^\d{1,5}$")
+
+
+def _reads_spec(category: str, profile: ExtractionProfile) -> bool:
+    """Is this a category whose drawings state a quantity and a cut length?
+
+    Single-part drawings, and by default only those: a part is one piece cut to
+    one length, which is exactly what the shop works to. An assembly title
+    block carries a number as well, but it counts assemblies rather than
+    anything cut, and the two side by side read as one column meaning two
+    things. An empty list switches the restriction off.
+    """
+    wanted = {c.strip().lower() for c in profile.spec_categories if c.strip()}
+    return not wanted or (category or "").strip().lower() in wanted
+
+
+def parse_length_inches(text: str) -> float | None:
+    """A cut length in inches, or None when it is not a length at all.
+
+    The sheet writes it the way the shop reads it - 8'-7 15/16" - which sorts
+    and subtracts like a string, which is to say not at all. Inches are what
+    makes "did this get longer, and by how much" answerable.
+    """
+    value = (text or "").strip().replace("’", "'").replace("”", '"')
+    if not value:
+        return None
+    match = _FEET_INCHES.match(value)
+    if match:
+        feet, inches, num, den = match.groups()
+        total = int(feet) * 12.0 + float(inches or 0)
+        if num and den and int(den):
+            total += int(num) / int(den)
+        return total
+    match = _INCHES_ONLY.match(value)
+    if match and any(match.groups()):
+        whole, num, den = match.groups()
+        total = float(whole or 0)
+        if num and den and int(den):
+            total += int(num) / int(den)
+        return total
+    return None
+
+
+def _is_length(value: str) -> bool:
+    return parse_length_inches(value) is not None
+
+
+def _spans_in(page: "fitz.Page", band: "fitz.Rect") -> list[dict]:
+    """Every non-empty text span inside ``band``, in reading order."""
+    try:
+        data = page.get_text("dict", clip=band)
+    except Exception:
+        return []
+    out: list[dict] = []
+    for block in data.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = (span.get("text") or "").strip()
+                if not text:
+                    continue
+                x0, y0, x1, y1 = span.get("bbox", (0, 0, 0, 0))
+                out.append({"text": text, "x0": x0, "y0": y0, "x1": x1, "y1": y1})
+    out.sort(key=lambda s: (round(s["y0"], 1), s["x0"]))
+    return out
+
+
+def _cell_under(spans: list[dict], labels: list[str],
+                accept: "Callable[[str], bool]") -> str:
+    """The value written in the cell below a heading.
+
+    The title block of a fabrication drawing is a table: Qty, Profile,
+    Material, Length, Weight as headings, and the values on the row beneath.
+    Read as flowing text the two rows interleave by column, so "Qty" is
+    followed by "Profile" and no same-line pattern can reach the number. The
+    cell is found by position instead - directly below the heading, left edges
+    aligned - which is also what stops the value of the next column over being
+    picked up.
+
+    Deliberately below only, never above. The same sheet carries a second Qty
+    heading with its value above it, in the "Qty / In Assembly" table, and that
+    is how many of the part go into one assembly - not how many to make.
+    """
+    wanted = {(l or "").strip().lower().rstrip(".") for l in labels if l.strip()}
+    for label in spans:
+        if label["text"].strip().lower().rstrip(".") not in wanted:
+            continue
+        # One table row down: far enough for the row beneath, not so far that
+        # the next band of the title block is in range.
+        drop = max(6.0, (label["y1"] - label["y0"]) * 3.0)
+        below = [s for s in spans
+                 if label["y1"] - 1.0 <= s["y0"] <= label["y1"] + drop
+                 and abs(s["x0"] - label["x0"]) <= _COLUMN_TOLERANCE]
+        for candidate in sorted(below, key=lambda s: s["y0"]):
+            if accept(candidate["text"]):
+                return candidate["text"]
+    return ""
+
+
+# How far a value may sit from its heading's left edge and still be the same
+# column. The templates seen align them to a third of a point; the slack is for
+# a value drawn centred in a narrow cell.
+_COLUMN_TOLERANCE = 8.0
 
 
 def parse_member_mark(mark: str, profile: ExtractionProfile | None = None
@@ -358,6 +482,45 @@ def extract_drawing(
                         setattr(record, attr, clean)
                         setattr(record, src_attr, source)
 
+                # How many, and how long. Single-part drawings only - see
+                # ExtractionProfile.spec_categories. The title block writes
+                # these as a table, so the cell under the heading is read first
+                # and the inline patterns are only the fallback.
+                # The band is the full width of the sheet at the title block's
+                # height: the Qty column sits left of the block's own left
+                # edge on a landscape sheet, outside the clip everything else
+                # is read from.
+                band = fitz.Rect(page.rect.x0, clip.y0, page.rect.x1, page.rect.y1)
+                spans = _spans_in(page, band) if _reads_spec(category, prof) else []
+
+                qty = _cell_under(spans, prof.quantity_labels,
+                                  lambda v: bool(_QTY_SHAPE.match(v.strip())))
+                if qty:
+                    record.quantity = qty.strip()
+                    record.quantity_source = SOURCE_TITLEBLOCK
+                elif _reads_spec(category, prof):
+                    for text, source in ((block_text, SOURCE_TITLEBLOCK),
+                                         (page_text, SOURCE_PAGE)):
+                        found = _first_match(text, _compile(prof.quantity_patterns))
+                        if found:
+                            record.quantity = found.strip()
+                            record.quantity_source = source
+                            break
+
+                length = _cell_under(spans, prof.length_labels, _is_length)
+                if length:
+                    record.length = length.strip()
+                    record.length_source = SOURCE_TITLEBLOCK
+                elif _reads_spec(category, prof):
+                    for text, source in ((block_text, SOURCE_TITLEBLOCK),
+                                         (page_text, SOURCE_PAGE)):
+                        found = _first_match(text, _compile(prof.length_patterns),
+                                             _is_length)
+                        if found:
+                            record.length = found.strip()
+                            record.length_source = source
+                            break
+
                 # Tier 3: unlabelled mark, largest text in the title block.
                 if not record.member_name and prof.use_largest_text_fallback:
                     candidate = _largest_mark(page, clip, shape, stopwords)
@@ -393,6 +556,20 @@ def extract_drawing(
 
     if not record.member_name and not record.error:
         record.notes.append("member name not found")
+
+    # The file name is the authority on case. A mark is an identifier, and the
+    # detailer types it into the file name the way it is meant to read -
+    # "17HSP134" and "17hsp134" are the same piece, but the register is worked
+    # from on a shop floor and it has to say what the file says. Only the
+    # spelling is taken, and only when the two are the same mark: a filename
+    # that disagrees about which mark this is stays a fallback, not an override.
+    for candidate in (from_name.get("member"), path.stem.strip()):
+        candidate = (candidate or "").strip()
+        if candidate and candidate.lower() == record.member_name.lower():
+            record.member_name = candidate
+            break
+
+    record.length_inches = parse_length_inches(record.length)
 
     record.job_no, record.seq_group, record.zone = parse_member_mark(
         record.member_name, prof

@@ -86,6 +86,43 @@ class ExtractionProfile:
         ]
     )
 
+    # --- Quantity and cut length -------------------------------------------
+    # A fabrication drawing carries the numbers the shop works to: how many of
+    # this piece to make, and how long to cut it. They are written as a table in
+    # the title block - the heading in one row, the value in the row below it -
+    # so they are read by column position rather than by a same-line pattern.
+    # These are the headings to look under, matched whole and case-insensitively.
+    #
+    # Read off single-part drawings only. A part is one piece cut to one length
+    # and that is what its title block states; an assembly's title block carries
+    # a number too, but it is the count of assemblies, not something the shop
+    # cuts to - tracked together they read as one column of numbers that mean
+    # two different things.
+    spec_categories: list[str] = field(
+        default_factory=lambda: ["Part"]
+    )
+    quantity_labels: list[str] = field(
+        default_factory=lambda: ["Qty", "Qty.", "Quantity", "No. Off", "No Off"]
+    )
+    length_labels: list[str] = field(
+        default_factory=lambda: ["Length", "Cut Length", "Len"]
+    )
+
+    # Templates that write them inline ("QTY: 3") instead of as a table. Tried
+    # after the table lookup, which is the arrangement on every drawing seen so
+    # far and the only one that cannot pick up a neighbouring cell by accident.
+    quantity_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"(?:QTY|QUANTITY|No\.?\s*OFF)\s*[:\-]\s*([0-9]{1,5})\b",
+        ]
+    )
+    length_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"(?:CUT\s*)?LENGTH\s*[:\-]\s*([0-9]+'[\s\-]*[0-9]+(?:\s+[0-9]+/[0-9]+)?\"?)",
+            r"(?:CUT\s*)?LENGTH\s*[:\-]\s*([0-9]+(?:\.[0-9]+)?)\b",
+        ]
+    )
+
     # --- Filename fallbacks -------------------------------------------------
     # Applied to the file stem when page text yields nothing. Named groups
     # ``seq``, ``member`` and ``rev`` are picked up if present.

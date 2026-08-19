@@ -454,11 +454,19 @@ def _chain_payload(chain, tracker: Path) -> dict:
             "on_hold": len(step.on_hold) if step else 0,
             "verdict": step.verdict if step else "first issue",
         })
+    # What the shop was told to make, and where it moved. A revision letter
+    # says a drawing changed; this says whether the numbers behind it did.
+    spec = [
+        {"member": c.member_name, "category": c.category, "field": c.field,
+         "old": c.old, "new": c.new, "delta": c.delta, "issue": c.label}
+        for c in chain.spec_changes
+    ]
     return {
         "project": chain.project,
         "baseline": chain.baseline_label,
         "issues": issues,
         "outstanding": len(chain.outstanding),
+        "spec_changes": spec,
         "tracker": tracker.name,
         "tracker_path": str(tracker),
         # The tracker can live somewhere the register does not - a job folder
@@ -488,7 +496,7 @@ async def api_generate(
     tracker_folder: str = Form(""),
     tracker_name: str = Form(""),
     save_default_tracker: bool = Form(False),
-    on_clash: str = Form(CLASH_NEXT_ROUND),
+    on_clash: str = Form(""),
 ):
     """Start the register build. Returns a job id; the page polls it for progress."""
     host = _client(request)
@@ -537,6 +545,21 @@ async def api_generate(
                 f"{ws.slugify(project_name, 'Package')} - Tracker.xlsx", host)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+    # A clash the page never asked about means the page is not the one this
+    # server is serving - a tab left open across a restart, or a cached script.
+    # Renumbering anyway is the silent wrong answer: the engineer typed round 1,
+    # the workbook comes back saying round 2, and nothing anywhere said so.
+    if track and tracker is not None and on_clash not in (CLASH_OVERWRITE, CLASH_NEXT_ROUND):
+        state = load_state(state_path_for(tracker))
+        held = state.issue_at(stage, round_no.strip() or meta.issue_no)
+        if held is not None and held.label != root.name:
+            raise HTTPException(
+                409,
+                f'{held.code} is already tracked in this chain, as "{held.label}". '
+                f'Reload the page (Ctrl+F5) and run again - it will ask whether to '
+                f'overwrite that issue or add this one as '
+                f'{stage}-{state.next_round(stage)}.')
 
     # Remembering the folder is what stops the engineer retyping it every issue.
     if disk.is_local_client(host):
@@ -613,8 +636,8 @@ def _track(register, root: Path, stage: str, round_no: str, settings,
         members=snapshot_register(register, settings),
     )
     # The page asked about a clash before starting the run - see the round block
-    # in /api/tracker/info - so the answer arrives with the request. Anything
-    # else than an explicit overwrite keeps both issues.
+    # in /api/tracker/info - and an unanswered one never reaches this far, so
+    # the only thing left to read is which answer came back.
     clash = state.clash_for(entry)
     taken = clash.code if clash is not None else ""
     state.add_issue(entry, CLASH_OVERWRITE if on_clash == CLASH_OVERWRITE
@@ -708,11 +731,27 @@ async def api_tracker_info(request: Request):
     stage = str(body.get("stage") or "").strip().upper()
     round_no = str(body.get("round") or "").strip()
     label = str(body.get("label") or "").strip()
-    if not raw:
+    host = _client(request)
+
+    # Given the boxes rather than a path, resolve it exactly as /api/generate
+    # will. Composed in the browser instead, the two disagree the moment the
+    # name box is left empty or typed without an extension - and the page then
+    # reports on a chain the run is not going to touch.
+    if body.get("folder") is not None or body.get("name") is not None:
+        project = str(body.get("project") or "").strip() or "Package"
+        try:
+            tracker = disk.resolve_target(
+                str(body.get("folder") or ""), str(body.get("name") or ""),
+                ws.TRACKER_ROOT, f"{ws.slugify(project, 'Package')} - Tracker.xlsx",
+                host, create=False)
+        except ValueError:
+            return {"exists": False}        # a bad folder is the run's error to report
+    elif not raw:
         return {"exists": False}
-    tracker = Path(raw)
-    if not disk.is_local_client(_client(request)):
-        tracker = ws.TRACKER_ROOT / tracker.name
+    else:
+        tracker = Path(raw)
+        if not disk.is_local_client(host):
+            tracker = ws.TRACKER_ROOT / tracker.name
     state_file = state_path_for(tracker)
     if not state_file.exists():
         return {"exists": tracker.exists(), "tracked": False, "path": str(tracker)}

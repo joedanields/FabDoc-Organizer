@@ -114,6 +114,25 @@ def _print_tracker(chain) -> None:
         print(f"{idx:<3}{entry.code:<9}{entry.label[:40]:<42}{entry.total:>9}   {status}")
 
 
+def _report_spec(chain) -> None:
+    """What the shop was told to make, where it moved.
+
+    A revision letter says a drawing changed; it does not say what changed in
+    it. Nobody opens 119 title blocks to find the four that moved.
+    """
+    changes = chain.spec_changes
+    if not changes:
+        return
+    print()
+    print(f"{len(changes)} quantity/length change(s) across the chain:")
+    for change in changes[:20]:
+        delta = f"   ({change.delta})" if change.delta else ""
+        print(f"  {change.member_name:<14} {change.field:<7} "
+              f"{change.old:>14} -> {change.new:<14}{delta}")
+    if len(changes) > 20:
+        print(f"  ... and {len(changes) - 20} more - see the Qty & Length sheet")
+
+
 def _report_holds(chain, tracker: Path) -> None:
     """Tell the user what is outstanding and what still needs a reason."""
     outstanding = chain.outstanding
@@ -202,6 +221,7 @@ def _track_issue(args: argparse.Namespace, settings, folder: Path, register) -> 
     write_tracker(chain, tracker)
 
     _print_tracker(chain)
+    _report_spec(chain)
     _report_holds(chain, tracker)
     print(f"\nTracker updated: {tracker}")
     return tracker
@@ -240,6 +260,7 @@ def cmd_track(args: argparse.Namespace) -> int:
     print(f"Project: {chain.project}")
     print(f"Approved baseline: {chain.baseline_label or '(none yet)'}")
     _print_tracker(chain)
+    _report_spec(chain)
     _report_holds(chain, tracker)
     print(f"\nTracker written to: {tracker}")
     return 0

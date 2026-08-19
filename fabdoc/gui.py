@@ -1214,6 +1214,17 @@ class FabDocApp(ttk.Frame):
         if outstanding:
             self._log(f"{len(outstanding)} approved member(s) still on hold "
                       f"(not removed).")
+        # What the shop was told to make, and whether it moved. A revision
+        # letter says a drawing changed without saying what changed in it.
+        moved = [c for c in chain.spec_changes if c.label == entry.label]
+        if moved:
+            self._log(f"{len(moved)} quantity/length change(s) in this issue:")
+            for change in moved[:10]:
+                self._log(f"  {change.member_name:<14} {change.field:<7} "
+                          f"{change.old} -> {change.new}"
+                          + (f"   ({change.delta})" if change.delta else ""))
+            if len(moved) > 10:
+                self._log(f"  ... and {len(moved) - 10} more")
         self._log(f"Tracker saved: {path}")
         self._set_status(f"Tracker updated: {path.name}")
 

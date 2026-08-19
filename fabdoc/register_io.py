@@ -10,7 +10,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from .extract import DrawingRecord
+from .extract import DrawingRecord, parse_length_inches
 from .folder_meta import ProjectMeta
 from .register import CategoryRegister, Register, sort_records
 
@@ -69,6 +69,8 @@ def read_register(path: str | Path) -> Register:
             i_seq = col("s.no", "sno", "s no", "seq", "sequence")
             i_member = col("member name", "member", "mark")
             i_rev = col("revision no", "revision", "rev")
+            i_qty = col("qty", "quantity")
+            i_len = col("length", "cut length")
             i_src = col("source file", "file")
             i_title = col("title")
             i_date = col("date")
@@ -96,6 +98,11 @@ def read_register(path: str | Path) -> Register:
                     rec.seq_no = row[i_seq].strip()
                 if 0 <= i_rev < len(row):
                     rec.revision = row[i_rev].strip()
+                if 0 <= i_qty < len(row):
+                    rec.quantity = row[i_qty].strip()
+                if 0 <= i_len < len(row):
+                    rec.length = row[i_len].strip()
+                    rec.length_inches = parse_length_inches(rec.length)
                 if 0 <= i_src < len(row):
                     rec.source_file = row[i_src].strip()
                 records.append(rec)

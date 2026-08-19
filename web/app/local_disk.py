@@ -213,20 +213,26 @@ def safe_name(raw: str, fallback: str) -> str:
 
 
 def resolve_target(folder: str, name: str, fallback_dir: Path, fallback_name: str,
-                   host: str | None) -> Path:
+                   host: str | None, create: bool = True) -> Path:
     """Where a workbook should be written.
 
     Falls back to the sandbox whenever a local folder is not available or not
     asked for, which is what keeps a shared deployment working unchanged.
+
+    ``create`` off answers the question without making the folder: the page asks
+    where a run *would* write every time a box changes, and typing a path is not
+    asking for it to be created.
     """
     filename = safe_name(name, fallback_name)
     if folder.strip() and is_local_client(host):
         path, problem = check_folder(folder)
         if path is None:
             raise ValueError(problem)
-        path.mkdir(parents=True, exist_ok=True)
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path / filename
-    fallback_dir.mkdir(parents=True, exist_ok=True)
+    if create:
+        fallback_dir.mkdir(parents=True, exist_ok=True)
     return fallback_dir / filename
 
 

@@ -26,6 +26,8 @@ def make_drawing(
     labelled: bool = True,
     big_mark: bool = False,
     blank: bool = False,
+    qty: str = "",
+    length: str = "",
 ) -> Path:
     """Write a single-page PDF that looks like a steel detail drawing."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,6 +51,19 @@ def make_drawing(
             if seq is not None:
                 page.insert_text((block.x0 + 12, y), f"S.No : {seq}", fontsize=11)
                 y += 22
+        # The fabrication table: headings in one row, the values in the row
+        # beneath them. Written as real text at real coordinates, because that
+        # column alignment is the whole of how the two are found.
+        if qty or length:
+            x = block.x0 + 12
+            head_y = block.y1 - 52
+            for label, value in (("Qty", qty), ("Profile", "L3X3X3/16"),
+                                 ("Length", length)):
+                page.insert_text((x, head_y), label, fontsize=9)
+                if value:
+                    page.insert_text((x, head_y + 13), value, fontsize=9)
+                x += 80
+
         if big_mark:
             page.insert_text((block.x0 + 12, block.y1 - 20), member, fontsize=26)
         page.insert_text((block.x0 + 12, block.y1 - 4), "DRAWN BY : AB", fontsize=8)
