@@ -283,6 +283,20 @@ Keep the **title identical** across issues of one package. The purpose clause
 (`IFF-2`) are stripped automatically, so those can change freely — but if the
 title itself changes, the issues will not chain into one tracker.
 
+The bracketed sequence list is stripped too, so it may change every issue. Write
+a run as a range rather than spelling out every number — `121-139`, `121 thru
+139` and `121 to 139` all read the same, and `,` `&` and `and` all separate
+entries:
+
+```
+27. 2026-08-20 Stairs at Zone 1 (Seqs 10, 11, 12, 121 thru 139 & 150)
+```
+
+If what is in the brackets is not a list of numbers (`(Seqs TBC)`), or a range
+runs backwards or spans more than 200, it is left in the title untouched rather
+than guessed at — which will split the package into its own tracker, so fix the
+folder name.
+
 ### Rule 5: Re-processing a folder is always safe
 
 Re-running the same folder **replaces** that issue in the tracker rather than

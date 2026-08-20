@@ -130,12 +130,57 @@ def parse_date_token(text: str, day_first: bool = True) -> tuple[date | None, st
 
 _ZONE_RE = re.compile(_LB + r"ZONE\s*[-_:# ]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,11})" + _RB, re.I)
 _ISSUE_NO_RE = re.compile(r"^(\d{1,4})\s*[.)]\s*")
-_SEQS_RE = re.compile(r"\(\s*SEQ(?:UENCE)?S?\.?\s*[:\-]?\s*([\d,\s]+?)\s*\)", re.I)
+_SEQS_RE = re.compile(r"\(\s*SEQ(?:UENCE)?S?\.?\s*[:\-]?\s*([^)]+?)\s*\)", re.I)
+# A run of sequences inside those brackets is written as a range as often as it
+# is listed out: "121-139", "121 thru 139", "121 to 139". Zone 1 alone runs
+# "10, 11, 12, 121 thru 139 & 150", which no list of bare numbers expresses.
+_SEQ_RANGE_RE = re.compile(r"^(\d+)\s*(?:-|–|—|THRU|THROUGH|TO)\s*(\d+)$", re.I)
+# What separates one entry from the next. Whitespace is deliberately absent: it
+# is the only thing holding "121 thru 139" together, so entries are split on the
+# explicit separators first, and on whitespace only inside an entry.
+_SEQ_SPLIT_RE = re.compile(r"[,;&+/]|\bAND\b", re.I)
+# A ceiling on one range. A typo - "12-1390" - would otherwise quietly expand to
+# a thousand sequences that were never in the package.
+_SEQ_RANGE_LIMIT = 200
 _ZONE_BARE_RE = re.compile(r"^Z[-_ ]?([A-Za-z0-9]{1,6})$", re.I)
 _PACKAGE_RE = re.compile(
     _LB + r"(?:PACKAGE|PKG|PCKG|PK)\s*[-_:# ]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,11})" + _RB, re.I
 )
 _REV_RE = re.compile(_LB + r"(?:REVISION|REV|ISSUE)\s*[-_:# ]?\s*([A-Za-z0-9]{1,4})" + _RB, re.I)
+
+
+def expand_sequences(text: str) -> list[str]:
+    """The sequence numbers a bracketed list names, with ranges written out.
+
+    "10, 11, 12, 121 thru 139 & 150" -> 10, 11, 12, 121 ... 139, 150. The order
+    written is kept, because that is the order the package is erected in, and a
+    number repeated across two entries is kept once.
+
+    Returns an empty list when the text is not a sequence list at all, which is
+    how the caller knows to leave those brackets in the title untouched.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for entry in _SEQ_SPLIT_RE.split(text):
+        entry = entry.strip()
+        if not entry:
+            continue
+        span = _SEQ_RANGE_RE.match(entry)
+        if span:
+            first, last = int(span.group(1)), int(span.group(2))
+            if first > last or last - first >= _SEQ_RANGE_LIMIT:
+                return []
+            values = [str(n) for n in range(first, last + 1)]
+        elif all(part.isdigit() for part in entry.split()):
+            values = entry.split()
+        else:
+            # A word, a letter, anything unnumbered: not a sequence list.
+            return []
+        for value in values:
+            if value not in seen:
+                seen.add(value)
+                found.append(value)
+    return found
 
 
 def parse_folder_name(name: str, day_first: bool = True) -> ProjectMeta:
@@ -157,10 +202,14 @@ def parse_folder_name(name: str, day_first: bool = True) -> ProjectMeta:
     if date_text:
         working = working.replace(date_text, " \x00 ", 1)
 
-    # "(Seqs 172,173,270,271)" - the sequences covered by this issue.
+    # "(Seqs 172,173,270,271)", or "(Seqs 10, 11, 12, 121 thru 139 & 150)" -
+    # the sequences covered by this issue. Excised from the title only when it
+    # reads as a sequence list; anything else bracketed after "Seq" is left in
+    # place rather than silently swallowed.
     seqs = _SEQS_RE.search(working)
-    if seqs:
-        meta.sequences = [s.strip() for s in re.split(r"[,\s]+", seqs.group(1)) if s.strip()]
+    found = expand_sequences(seqs.group(1)) if seqs else []
+    if seqs and found:
+        meta.sequences = found
         working = working[: seqs.start()] + " \x00 " + working[seqs.end():]
 
     # Every zone mentioned, in order, de-duplicated: "Zone 1 and Zone 2" -> 1, 2.

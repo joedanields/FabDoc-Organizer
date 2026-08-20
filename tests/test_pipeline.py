@@ -478,6 +478,52 @@ def test_zone_tokens_are_not_cut_out_of_the_title():
     assert meta.title == "Stairs at Zone 1 and Zone 2 for Re Approval"
 
 
+def test_a_sequence_range_is_written_out():
+    """Zone 1 runs "10, 11, 12, 121 thru 139 & 150" - a range, not a list."""
+    meta = parse_folder_name(
+        "27. 2026-08-20 Stairs at Zone 1 (Seqs 10, 11, 12, 121 thru 139 & 150)"
+    )
+    assert meta.sequences == ["10", "11", "12"] + [str(n) for n in range(121, 140)] + ["150"]
+    assert meta.zones == ["1"]
+
+
+@pytest.mark.parametrize("written", [
+    "10,11,12,121-139,150",
+    "10, 11, 12, 121 thru 139 & 150",
+    "10 11 12, 121 through 139 and 150",
+    "10,11,12,121 to 139,150",
+])
+def test_the_ways_a_range_is_written_all_read_alike(written):
+    meta = parse_folder_name(f"27. 2026-08-20 Stairs at Zone 1 (Seqs {written})")
+    assert meta.sequences[:3] == ["10", "11", "12"]
+    assert meta.sequences[3:] == [str(n) for n in range(121, 140)] + ["150"]
+
+
+def test_a_range_leaves_nothing_behind_in_the_title():
+    """The title is the package identity the tracker chains on, so a sequence
+    list that varies every issue must not survive into it."""
+    first = parse_folder_name("27. 2026-08-20 Stairs at Zone 1 (Seqs 172,173)")
+    later = parse_folder_name("31. 2026-09-04 Stairs at Zone 1 (Seqs 121 thru 139)")
+    assert first.title == later.title == "Stairs at Zone 1"
+
+
+@pytest.mark.parametrize("written", [
+    "TBC",              # not numbered at all
+    "139-121",          # backwards
+    "12-1390",          # a typo that would expand to a thousand sequences
+])
+def test_brackets_that_are_not_a_sequence_list_stay_in_the_title(written):
+    """Better a noisy title than sequences the package never had."""
+    meta = parse_folder_name(f"27. 2026-08-20 Stairs at Zone 1 (Seqs {written})")
+    assert meta.sequences == []
+    assert meta.title == f"Stairs at Zone 1 (Seqs {written})"
+
+
+def test_a_sequence_named_twice_is_kept_once():
+    meta = parse_folder_name("27. 2026-08-20 Stairs at Zone 1 (Seqs 121-125, 123)")
+    assert meta.sequences == ["121", "122", "123", "124", "125"]
+
+
 @pytest.mark.parametrize("mark,job,seq,zone", [
     ("17172C172", "17", "172", "1"),
     ("17173R44", "17", "173", "1"),
@@ -491,6 +537,12 @@ def test_zone_tokens_are_not_cut_out_of_the_title():
     ("1710B84", "17", "10", "1"),
     ("1710B100", "17", "10", "1"),
     ("1720S5", "17", "20", "2"),
+    # The rest of Zone 1: seqs 10, 11, 12, 121-139 and 150.
+    ("1711C5", "17", "11", "1"),
+    ("1712A3", "17", "12", "1"),
+    ("17121B4", "17", "121", "1"),
+    ("17139R2", "17", "139", "1"),
+    ("17150C2", "17", "150", "1"),
 ])
 def test_sequence_and_zone_derived_from_member_mark(mark, job, seq, zone):
     assert parse_member_mark(mark) == (job, seq, zone)
